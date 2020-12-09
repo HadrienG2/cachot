@@ -22,6 +22,7 @@ const L2_MISS_COST: Cost = 10.0;
 const L3_CAPACITY: usize = 32 * 1024 * 1024;
 const L3_MISS_COST: Cost = 60.0;
 
+/// CPU cache model, used for evaluating locality merits of 2D iteration schemes
 #[derive(Debug)]
 struct CacheModel {
     // Entries ordered by access date, most recently accessed entry goes last
@@ -38,7 +39,7 @@ struct CacheModel {
 }
 
 impl CacheModel {
-    // Set up a cache model
+    /// Set up the cache model by telling the size of individual cache entries
     pub fn new(entry_size: usize) -> Self {
         Self {
             entries: Vec::new(),
@@ -48,8 +49,9 @@ impl CacheModel {
         }
     }
 
-    // Model of how expensive it is to access an entry with respect to how many
-    // other entries have been accessed since the last time it was accessed.
+    /// Tell how expensive it would be to access an entry (in units of L1 cache
+    /// miss costs, with L1 hits considered free), given how many other entries
+    /// have been accessed since the last time this entry was accessed.
     fn cost_model(&self, age: usize) -> Cost {
         if age < self.l1_entries {
             0.0
@@ -62,6 +64,7 @@ impl CacheModel {
         }
     }
 
+    /// Simulate loading an entry and return the cost in units of L1 cache miss
     pub fn simulate_access(&mut self, entry: Entry) -> Cost {
         // Look up the entry in the cache
         let entry_pos = self.entries.iter().rposition(|&item| item == entry);
@@ -72,7 +75,7 @@ impl CacheModel {
             let entry_age = self.entries.len() - entry_pos - 1;
             let access_cost = self.cost_model(entry_age);
 
-            // Move the entry to the front of the cache
+            // Move the entry back to the front of the cache
             self.entries.remove(entry_pos);
             self.entries.push(entry);
 
@@ -96,10 +99,12 @@ fn test_feed_pair_locality(
     name: &str,
     feed_pair_iterator: impl Iterator<Item = [FeedIdx; 2]>,
 ) {
-    println!("Testing feed pair iterator \"{}\"...", name);
+    if debug_level > 0 {
+        println!("\nTesting feed pair iterator \"{}\"...", name);
+    }
     let mut cache_model = CacheModel::new(entry_size);
     let mut total_cost = 0.0;
-    let mut pair_count = 0;
+    let mut feed_load_count = 0;
     for feed_pair in feed_pair_iterator {
         if debug_level >= 2 {
             println!("- Accessing feed pair {:?}...", feed_pair)
@@ -118,17 +123,24 @@ fn test_feed_pair_locality(
                 "- Accessed feed pair {:?} for cache cost {}",
                 feed_pair, pair_cost
             ),
-            2 => println!("  * Total cache cost of this pair is {}", pair_cost),
-            _ => unreachable!(),
+            _ => println!("  * Total cache cost of this pair is {}", pair_cost),
         }
         total_cost += pair_cost;
-        pair_count += 1;
+        feed_load_count += 2;
     }
-    println!(
-        "- Total cache cost of this iterator is {} ({:.2} per pair)\n",
-        total_cost,
-        total_cost / pair_count as Cost
-    );
+    match debug_level {
+        0 => println!(
+            "Total cache cost of iterator \"{}\" is {} ({:.2} per feed load)",
+            name,
+            total_cost,
+            total_cost / (feed_load_count as Cost)
+        ),
+        _ => println!(
+            "- Total cache cost of this iterator is {} ({:.2} per feed load)",
+            total_cost,
+            total_cost / (feed_load_count as Cost)
+        ),
+    }
 }
 
 fn main() {
@@ -140,7 +152,7 @@ fn main() {
         // Actual PAON-4 configuration
         8,
         // What would happen with more feeds?
-        /*16*/
+        16
     ];
     let mut debug_level = 2;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
@@ -150,7 +162,8 @@ fn main() {
         // otherwise every access to a new pair will be a cache miss.
         //
         // When you're so much starved for cache, no smart iteration scheme will
-        // save you and the basic iteration order will be the least bad one.
+        // save you and the basic iteration order will be the least bad one
+        // because it has optimal locality for one of the feeds in the pair.
         //
         // Conversely, when your cache is large enough to hold all feeds, the
         // iteration order that you use across feeds doesn't matter.
@@ -162,9 +175,12 @@ fn main() {
         //
         for num_l1_entries in 3..num_feeds {
             let entry_size = L1_CAPACITY / num_l1_entries;
-            println!("--- Testing L1 capacity of {} feeds ---\n", num_l1_entries);
+            println!("--- Testing L1 capacity of {} feeds ---", num_l1_entries);
+            if debug_level == 0 {
+                println!();
+            }
 
-            // Current iteration scheme
+            // Naive iteration scheme
             let_gen!(basic, {
                 for feed1 in 0..num_feeds {
                     for feed2 in feed1..num_feeds {
@@ -180,8 +196,10 @@ fn main() {
                 let_gen!(blocked_basic, {
                     for feed1_block in (0..num_feeds).step_by(block_size) {
                         for feed2_block in (feed1_block..num_feeds).step_by(block_size) {
-                            for feed1 in feed1_block..feed1_block + block_size {
-                                for feed2 in feed1.max(feed2_block)..feed2_block + block_size {
+                            for feed1 in feed1_block..(feed1_block + block_size).min(num_feeds) {
+                                for feed2 in feed1.max(feed2_block)
+                                    ..(feed2_block + block_size).min(num_feeds)
+                                {
                                     yield_!([feed1, feed2]);
                                 }
                             }
@@ -194,7 +212,7 @@ fn main() {
                     &format!("{0}x{0} blocks", block_size),
                     blocked_basic.into_iter(),
                 );
-                block_size *= 2;
+                block_size += 1;
             }
 
             // Morton curve ("Z order") iteration
@@ -214,6 +232,7 @@ fn main() {
             // TODO: Maybe test Hilbert iteration
 
             debug_level = debug_level.saturating_sub(1);
+            println!();
         }
         debug_level = (num_feeds < 8).into();
     }
