@@ -1,7 +1,9 @@
+mod morton;
+
 use genawaiter::{stack::let_gen, yield_};
 
-type Feed = usize;
-type Entry = Feed;
+type FeedIdx = usize;
+type Entry = FeedIdx;
 type Cost = f32;
 
 // Numbers stolen from the latency plot of Anandtech's Zen3 review, not very
@@ -92,7 +94,7 @@ fn test_feed_pair_locality(
     debug_level: usize,
     entry_size: usize,
     name: &str,
-    feed_pair_iterator: impl Iterator<Item = [Feed; 2]>,
+    feed_pair_iterator: impl Iterator<Item = [FeedIdx; 2]>,
 ) {
     println!("Testing feed pair iterator \"{}\"...", name);
     let mut cache_model = CacheModel::new(entry_size);
@@ -131,23 +133,31 @@ fn test_feed_pair_locality(
 
 fn main() {
     #[rustfmt::skip]
-    const TESTED_NUM_FEEDS: &'static [Feed] = &[
+    const TESTED_NUM_FEEDS: &'static [FeedIdx] = &[
         // Minimal useful test (any iteration scheme is optimal with 2 feeds)
         // Useful for manual inspection of detailed execution traces
         4,
         // Actual PAON-4 configuration
         8,
+        // What would happen with more feeds?
+        /*16*/
     ];
     let mut debug_level = 2;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
-        // L1 must be able to contain at least 3 entries, otherwise every access
+        println!("=== Testing with {} feeds ===\n", num_feeds);
+
+        // L1 must be able to contain at least 3 feeds, otherwise every access
         // to a pair other than the current one will be a cache miss.
-        for num_l1_entries in 3..num_feeds {
+        //
+        // When you're so much starved for cache, no smart iteration scheme will
+        // save you and the basic iteration order will be the least bad one.
+        //
+        // But we expect interesting effects to occur every time the cache is
+        // able to hold an extra pair of feeds.
+        //
+        for num_l1_entries in std::iter::once(3).chain((4..num_feeds).step_by(2)) {
             let entry_size = L1_CAPACITY / num_l1_entries;
-            println!(
-                "=== Testing with {} feeds, L1 capacity = {} feeds ===\n",
-                num_feeds, num_l1_entries
-            );
+            println!("--- Testing L1 capacity of {} feeds ---\n", num_l1_entries);
 
             // Current iteration scheme
             let_gen!(basic, {
@@ -157,7 +167,7 @@ fn main() {
                     }
                 }
             });
-            test_feed_pair_locality(debug_level, entry_size, "basic", basic.into_iter());
+            test_feed_pair_locality(debug_level, entry_size, "Naive", basic.into_iter());
 
             // Block-wise iteration scheme
             let mut block_size = 2;
@@ -176,17 +186,30 @@ fn main() {
                 test_feed_pair_locality(
                     debug_level,
                     entry_size,
-                    &format!("blocked basic (block size {})", block_size),
+                    &format!("{0}x{0} blocks", block_size),
                     blocked_basic.into_iter(),
                 );
                 block_size *= 2;
             }
 
-            // TODO: Test Morton iteration
+            // Morton curve ("Z order") iteration
+            let_gen!(morton, {
+                // Iterate over Morton curve indices
+                for morton_idx in 0..(num_feeds * num_feeds) {
+                    // Translate back into grid indices
+                    let [feed1, feed2] = morton::decode_2d(morton_idx);
+                    // Only yield each pair once
+                    if feed2 >= feed1 {
+                        yield_!([feed1, feed2]);
+                    }
+                }
+            });
+            test_feed_pair_locality(debug_level, entry_size, "Morton curve", morton.into_iter());
+
             // TODO: Maybe test Hilbert iteration
 
             debug_level = debug_level.saturating_sub(1);
         }
-        debug_level = 1;
+        debug_level = (num_feeds < 8).into();
     }
 }
