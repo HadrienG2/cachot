@@ -17,7 +17,7 @@ const fn striped_mask(stripe_length: usize) -> FeedIdx {
     // Build a right-aligned stripe of ones of the right length
     let mut stripe = 0b1;
     let mut current_stripe_length = 1;
-    while stripe_length != current_stripe_length {
+    while current_stripe_length != stripe_length {
         stripe |= stripe << current_stripe_length;
         current_stripe_length *= 2;
     }
@@ -63,12 +63,11 @@ pub const fn decode_2d(code: FeedIdx) -> [FeedIdx; 2] {
             // Iteration 1: [  0 a1 a1 a2 a2 a3 a3 a4 ... aN-2 aN-1 aN-1 aN ]
             // Iteration 2: [  0  0 a1 a2 a1 a2 a3 a4 ... aN-3 aN-2 aN-1 aN ]
             sub_code |= sub_code >> group_size;
-            // Only keep a single copy of each bit group, zeroing out the rest
+            group_size *= 2;
+            // Only keep the output pairs, zeroing out the rest
             // Iteration 1: [  0 a1  0 a2  0 a3  0 a4 ...    0 aN-1    0 aN ]
             // Iteration 2: [  0  0 a1 a2  0  0 a3 a4 ...    0    0 aN-1 aN ]
             sub_code &= striped_mask(group_size);
-            // Repeat until all bits have been grouped together
-            group_size *= 2;
         }
         // Record the decoded index and move to the next one
         sub_codes[sub_code_idx] = sub_code;

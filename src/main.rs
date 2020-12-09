@@ -146,16 +146,21 @@ fn main() {
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
         println!("=== Testing with {} feeds ===\n", num_feeds);
 
-        // L1 must be able to contain at least 3 feeds, otherwise every access
-        // to a pair other than the current one will be a cache miss.
+        // The L1 cache must be able to hold data for at least 3 feeds,
+        // otherwise every access to a new pair will be a cache miss.
         //
         // When you're so much starved for cache, no smart iteration scheme will
         // save you and the basic iteration order will be the least bad one.
         //
-        // But we expect interesting effects to occur every time the cache is
-        // able to hold an extra pair of feeds.
+        // Conversely, when your cache is large enough to hold all feeds, the
+        // iteration order that you use across feeds doesn't matter.
         //
-        for num_l1_entries in std::iter::once(3).chain((4..num_feeds).step_by(2)) {
+        // Interesting things happen between these two extreme case. Iteration
+        // orders with good locality properties can live with a "smaller" cache,
+        // but also with larger chunks of feed data, which are potentially more
+        // efficient to process.
+        //
+        for num_l1_entries in 3..num_feeds {
             let entry_size = L1_CAPACITY / num_l1_entries;
             println!("--- Testing L1 capacity of {} feeds ---\n", num_l1_entries);
 
@@ -198,7 +203,7 @@ fn main() {
                 for morton_idx in 0..(num_feeds * num_feeds) {
                     // Translate back into grid indices
                     let [feed1, feed2] = morton::decode_2d(morton_idx);
-                    // Only yield each pair once
+                    // Only yield each feed pair once
                     if feed2 >= feed1 {
                         yield_!([feed1, feed2]);
                     }
