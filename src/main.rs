@@ -131,7 +131,7 @@ fn test_feed_pair_locality(
 
 fn main() {
     #[rustfmt::skip]
-    const TESTED_NUM_FEEDS: [Feed; 2] = [
+    const TESTED_NUM_FEEDS: &'static [Feed] = &[
         // Minimal useful test (any iteration scheme is optimal with 2 feeds)
         // Useful for manual inspection of detailed execution traces
         4,
@@ -145,7 +145,7 @@ fn main() {
         for num_l1_entries in 3..num_feeds {
             let entry_size = L1_CAPACITY / num_l1_entries;
             println!(
-                "=== TESTING WITH {} FEEDS, L1 CAPACITY {} ===\n",
+                "=== Testing with {} feeds, L1 capacity = {} feeds ===\n",
                 num_feeds, num_l1_entries
             );
 
