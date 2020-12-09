@@ -5,10 +5,10 @@ type Entry = Feed;
 type Cost = f32;
 
 // Numbers stolen from the latency plot of Anandtech's Zen3 review, not very
-// precise but we only care about the orders of magnitude...
+// precise but we only care about the orders of magnitude on recent CPUs...
 //
-// We're using orders of magnitude from the region where most of AnandTech's
-// tests fall, "full random" is probably too pessimistic here.
+// We're using numbers from the region where most of AnandTech's tests move out
+// of cache. The "full random" test is probably too pessimistic here.
 //
 // We're taking the height of cache latencies plateaux as our cost figure and
 // the abscissa of half-plateau as our capacity figure.
@@ -97,6 +97,7 @@ fn test_feed_pair_locality(
     println!("Testing feed pair iterator \"{}\"...", name);
     let mut cache_model = CacheModel::new(entry_size);
     let mut total_cost = 0.0;
+    let mut pair_count = 0;
     for feed_pair in feed_pair_iterator {
         if debug_level >= 2 {
             println!("- Accessing feed pair {:?}...", feed_pair)
@@ -115,12 +116,17 @@ fn test_feed_pair_locality(
                 "- Accessed feed pair {:?} for cache cost {}",
                 feed_pair, pair_cost
             ),
-            2 => println!("  * Cache cost of this pair is {}", pair_cost),
+            2 => println!("  * Total cache cost of this pair is {}", pair_cost),
             _ => unreachable!(),
         }
         total_cost += pair_cost;
+        pair_count += 1;
     }
-    println!("- Cache cost of this iterator is {}\n", total_cost);
+    println!(
+        "- Total cache cost of this iterator is {} ({:.2} per pair)\n",
+        total_cost,
+        total_cost / pair_count as Cost
+    );
 }
 
 fn main() {
