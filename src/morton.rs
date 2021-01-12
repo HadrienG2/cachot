@@ -1,7 +1,6 @@
 //! Implementation of Morton code decoding
 
 use crate::FeedIdx;
-
 // Number of bits in an integer of a certain size
 const fn num_bits<T>() -> usize {
     std::mem::size_of::<T>() * 8
@@ -59,14 +58,14 @@ pub const fn decode_2d(code: FeedIdx) -> [FeedIdx; 2] {
         let mut group_size = 1;
         while group_size != num_bits::<FeedIdx>() / 2 {
             // Duplicate the current bit pattern into neighboring zeroes on the
-            // right in order to group pairs of subcode bits together
+            // right in order to group pairs of subcode bit groups together
             // Iteration 1: [  0 a1 a1 a2 a2 a3 a3 a4 ... aN-2 aN-1 aN-1 aN ]
             // Iteration 2: [  0  0 a1 a2 a1 a2 a3 a4 ... aN-3 aN-2 aN-1 aN ]
             sub_code |= sub_code >> group_size;
             group_size *= 2;
-            // Only keep the output pairs, zeroing out the rest
-            // Iteration 1: [  0 a1  0 a2  0 a3  0 a4 ...    0 aN-1    0 aN ]
-            // Iteration 2: [  0  0 a1 a2  0  0 a3 a4 ...    0    0 aN-1 aN ]
+            // Only keep the paired bit groups, zeroing out the rest
+            // Iteration 1: [  0  0 a1 a2  0  0 a3 a4 ...    0    0 aN-1 aN ]
+            // Iteration 2: [  0  0  0  0 a1 a2 a3 a4 ... aN-3 aN-2 aN-1 aN ]
             sub_code &= striped_mask(group_size);
         }
         // Record the decoded index and move to the next one
