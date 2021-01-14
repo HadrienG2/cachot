@@ -1,11 +1,11 @@
 mod cache;
-mod morton;
 
 use crate::cache::CacheModel;
 
 use genawaiter::{stack::let_gen, yield_};
+use space_filler::{hilbert, morton, Coordinate, CurveIdx};
 
-type FeedIdx = usize;
+type FeedIdx = Coordinate;
 
 fn test_feed_pair_locality(
     debug_level: usize,
@@ -88,7 +88,7 @@ fn main() {
         // efficient to process.
         //
         for num_l1_entries in 3..num_feeds {
-            let entry_size = cache::L1_CAPACITY / num_l1_entries;
+            let entry_size = cache::L1_CAPACITY / num_l1_entries as usize;
             println!("--- Testing L1 capacity of {} feeds ---", num_l1_entries);
             if debug_level == 0 {
                 println!();
@@ -108,8 +108,8 @@ fn main() {
             let mut block_size = 2;
             while block_size < num_feeds {
                 let_gen!(blocked_basic, {
-                    for feed1_block in (0..num_feeds).step_by(block_size) {
-                        for feed2_block in (feed1_block..num_feeds).step_by(block_size) {
+                    for feed1_block in (0..num_feeds).step_by(block_size.into()) {
+                        for feed2_block in (feed1_block..num_feeds).step_by(block_size.into()) {
                             for feed1 in feed1_block..(feed1_block + block_size).min(num_feeds) {
                                 for feed2 in feed1.max(feed2_block)
                                     ..(feed2_block + block_size).min(num_feeds)
@@ -130,20 +130,16 @@ fn main() {
             }
 
             // Morton curve ("Z order") iteration
-            let_gen!(morton, {
-                // Iterate over Morton curve indices
-                for morton_idx in 0..(num_feeds * num_feeds) {
-                    // Translate back into grid indices
-                    let [feed1, feed2] = morton::decode_2d(morton_idx);
-                    // Only yield each feed pair once
-                    if feed2 >= feed1 {
-                        yield_!([feed1, feed2]);
-                    }
-                }
-            });
-            test_feed_pair_locality(debug_level, entry_size, "Morton curve", morton.into_iter());
+            let morton = (0..(num_feeds as CurveIdx * num_feeds as CurveIdx))
+                .map(morton::decode_2d)
+                .filter(|[feed1, feed2]| feed2 >= feed1);
+            test_feed_pair_locality(debug_level, entry_size, "Morton curve", morton);
 
-            // TODO: Maybe test Hilbert iteration
+            // Hilbert curve iteration
+            let hilbert = (0..(num_feeds as CurveIdx * num_feeds as CurveIdx))
+                .map(hilbert::decode_2d)
+                .filter(|[feed1, feed2]| feed2 >= feed1);
+            test_feed_pair_locality(debug_level, entry_size, "Hilbert curve", hilbert);
 
             debug_level = debug_level.saturating_sub(1);
             println!();

@@ -5,6 +5,7 @@ name = "cachalot"
 version = "0.1.0"
 dependencies = [
  "genawaiter",
+ "space-filler",
 ]
 
 [[package]]
@@ -86,6 +87,11 @@ checksum = "aa563d17ecb180e500da1cfd2b028310ac758de548efdd203e18f283af693f37"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "space-filler"
+version = "0.1.0"
+source = "git+https://github.com/HadrienG2/space-filler.git#718e8e2897eb683987f943643c6555ec7c47f8d5"
 
 [[package]]
 name = "syn"
