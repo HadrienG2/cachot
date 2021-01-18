@@ -3,57 +3,104 @@ mod cache;
 use crate::cache::CacheModel;
 
 use genawaiter::{stack::let_gen, yield_};
-use space_filler::{hilbert, morton, Coordinate, CurveIdx};
+use space_filler::{hilbert, morton, CurveIdx};
 
-type FeedIdx = Coordinate;
+/// Integer type used for counting radio feeds
+type FeedIdx = space_filler::Coordinate;
 
-fn test_feed_pair_locality(
+/// Test harness for evaluating the locality of several feed pair iterators and
+/// picking the best of them.
+struct PairLocalityTester {
     debug_level: usize,
     entry_size: usize,
-    name: &str,
-    feed_pair_iterator: impl Iterator<Item = [FeedIdx; 2]>,
-) {
-    if debug_level > 0 {
-        println!("\nTesting feed pair iterator \"{}\"...", name);
-    }
-    let mut cache_model = CacheModel::new(entry_size);
-    let mut total_cost = 0.0;
-    let mut feed_load_count = 0;
-    for feed_pair in feed_pair_iterator {
-        if debug_level >= 2 {
-            println!("- Accessing feed pair {:?}...", feed_pair)
+    best_iterator: Option<(String, cache::Cost)>,
+}
+//
+impl PairLocalityTester {
+    /// Build the test harness
+    pub fn new(debug_level: usize, entry_size: usize) -> Self {
+        Self {
+            debug_level,
+            entry_size,
+            best_iterator: None,
         }
-        let mut pair_cost = 0.0;
-        for feed in feed_pair.iter().copied() {
-            let feed_cost = cache_model.simulate_access(feed);
-            if debug_level >= 2 {
-                println!("  * Accessed feed {} for cache cost {}", feed, feed_cost)
+    }
+
+    /// Test the locality of one feed pair iterator
+    pub fn test_feed_pair_locality(
+        &mut self,
+        name: &str,
+        feed_pair_iterator: impl Iterator<Item = [FeedIdx; 2]>,
+    ) {
+        if self.debug_level > 0 {
+            println!("\nTesting feed pair iterator \"{}\"...", name);
+        }
+        let mut cache_model = CacheModel::new(self.entry_size);
+        let mut total_cost = 0.0;
+        let mut feed_load_count = 0;
+        for feed_pair in feed_pair_iterator {
+            if self.debug_level >= 2 {
+                println!("- Accessing feed pair {:?}...", feed_pair)
             }
-            pair_cost += feed_cost;
+            let mut pair_cost = 0.0;
+            for feed in feed_pair.iter().copied() {
+                let feed_cost = cache_model.simulate_access(feed);
+                if self.debug_level >= 2 {
+                    println!("  * Accessed feed {} for cache cost {}", feed, feed_cost)
+                }
+                pair_cost += feed_cost;
+            }
+            match self.debug_level {
+                0 => {}
+                1 => println!(
+                    "- Accessed feed pair {:?} for cache cost {}",
+                    feed_pair, pair_cost
+                ),
+                _ => println!("  * Total cache cost of this pair is {}", pair_cost),
+            }
+            total_cost += pair_cost;
+            feed_load_count += 2;
         }
-        match debug_level {
-            0 => {}
-            1 => println!(
-                "- Accessed feed pair {:?} for cache cost {}",
-                feed_pair, pair_cost
+        match self.debug_level {
+            0 => println!(
+                "Total cache cost of iterator \"{}\" is {} ({:.2} per feed load)",
+                name,
+                total_cost,
+                total_cost / (feed_load_count as cache::Cost)
             ),
-            _ => println!("  * Total cache cost of this pair is {}", pair_cost),
+            _ => println!(
+                "- Total cache cost of this iterator is {} ({:.2} per feed load)",
+                total_cost,
+                total_cost / (feed_load_count as cache::Cost)
+            ),
         }
-        total_cost += pair_cost;
-        feed_load_count += 2;
+        let best_cost = self
+            .best_iterator
+            .as_ref()
+            .map(|(_name, cost)| *cost)
+            .unwrap_or(cache::Cost::MAX);
+        if total_cost < best_cost {
+            self.best_iterator = Some((name.to_owned(), total_cost));
+        }
     }
-    match debug_level {
-        0 => println!(
-            "Total cache cost of iterator \"{}\" is {} ({:.2} per feed load)",
-            name,
-            total_cost,
-            total_cost / (feed_load_count as cache::Cost)
-        ),
-        _ => println!(
-            "- Total cache cost of this iterator is {} ({:.2} per feed load)",
-            total_cost,
-            total_cost / (feed_load_count as cache::Cost)
-        ),
+
+    /// Tell which of the iterators that were tested so far got the best results
+    ///
+    /// If a tie occurs, pick the first iterator, as we're testing designs from
+    /// the simplest to the most complex ones.
+    ///
+    pub fn announce_best_iterator(&self) {
+        if self.debug_level > 0 {
+            println!();
+        }
+        let (best_name, best_cost) = self
+            .best_iterator
+            .as_ref()
+            .expect("No iterator has been tested yet");
+        println!(
+            "The best iterator so far is \"{}\" with cost {}",
+            best_name, best_cost
+        );
     }
 }
 
@@ -89,20 +136,21 @@ fn main() {
         //
         for num_l1_entries in 3..num_feeds {
             let entry_size = cache::L1_CAPACITY / num_l1_entries as usize;
+            let mut locality_tester = PairLocalityTester::new(debug_level, entry_size);
             println!("--- Testing L1 capacity of {} feeds ---", num_l1_entries);
             if debug_level == 0 {
                 println!();
             }
 
             // Naive iteration scheme
-            let_gen!(basic, {
+            let_gen!(naive, {
                 for feed1 in 0..num_feeds {
                     for feed2 in feed1..num_feeds {
                         yield_!([feed1, feed2]);
                     }
                 }
             });
-            test_feed_pair_locality(debug_level, entry_size, "Naive", basic.into_iter());
+            locality_tester.test_feed_pair_locality("Naive", naive.into_iter());
 
             // Block-wise iteration scheme
             let mut block_size = 2;
@@ -120,9 +168,7 @@ fn main() {
                         }
                     }
                 });
-                test_feed_pair_locality(
-                    debug_level,
-                    entry_size,
+                locality_tester.test_feed_pair_locality(
                     &format!("{0}x{0} blocks", block_size),
                     blocked_basic.into_iter(),
                 );
@@ -130,16 +176,19 @@ fn main() {
             }
 
             // Morton curve ("Z order") iteration
-            let morton = (0..(num_feeds as CurveIdx * num_feeds as CurveIdx))
-                .map(morton::decode_2d)
+            let morton = morton::iter_2d()
+                .take(num_feeds as usize * num_feeds as usize)
                 .filter(|[feed1, feed2]| feed2 >= feed1);
-            test_feed_pair_locality(debug_level, entry_size, "Morton curve", morton);
+            locality_tester.test_feed_pair_locality("Morton curve", morton);
 
             // Hilbert curve iteration
             let hilbert = (0..(num_feeds as CurveIdx * num_feeds as CurveIdx))
                 .map(hilbert::decode_2d)
                 .filter(|[feed1, feed2]| feed2 >= feed1);
-            test_feed_pair_locality(debug_level, entry_size, "Hilbert curve", hilbert);
+            locality_tester.test_feed_pair_locality("Hilbert curve", hilbert);
+
+            // Tell which iterator got the best results
+            locality_tester.announce_best_iterator();
 
             debug_level = debug_level.saturating_sub(1);
             println!();
