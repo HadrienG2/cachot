@@ -292,8 +292,10 @@ fn enumerate_paths_impl(
 ) {
     // Check if we reached a full path yet
     if debug_level >= 3 {
-        println!("    - On path {:?}", path);
-        println!("    - Current path cost is {}", path_cost);
+        println!(
+            "    - Currently on path {:?} with partial cache cost {}",
+            path, path_cost
+        );
     }
     let path_length = path.capacity();
     if path.len() == path_length {
@@ -364,7 +366,11 @@ fn enumerate_paths_impl(
             next_cost += next_cache.simulate_access(next_y);
             if next_cost > *best_cost {
                 if debug_level >= 4 {
-                    println!("      * That exceeds previous cache cost with only {}/{} path steps, ignore it.", path.len()+1, path.capacity());
+                    println!(
+                        "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
+                        path.len() + 1,
+                        path.capacity()
+                    );
                 }
                 continue;
             }
@@ -394,6 +400,6 @@ fn enumerate_paths_impl(
         }
     }
     if debug_level >= 3 {
-        println!("    - Done exploring possibilities from that path");
+        println!("    - Done exploring possibilities from current path");
     }
 }
