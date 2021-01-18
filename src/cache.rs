@@ -22,7 +22,7 @@ pub const L3_CAPACITY: usize = 32 * 1024 * 1024;
 pub const L3_MISS_COST: Cost = 60.0;
 
 /// CPU cache model, used for evaluating locality merits of 2D iteration schemes
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CacheModel {
     // Entries ordered by access date, most recently accessed entry goes last
     entries: Vec<Entry>,
@@ -71,7 +71,7 @@ impl CacheModel {
         // Was it found?
         if let Some(entry_pos) = entry_pos {
             // If so, compute entry age and deduce access cost
-            let entry_age = self.entries.len() - entry_pos - 1;
+            let entry_age = self.entries.len() - 1 - entry_pos;
             let access_cost = self.cost_model(entry_age);
 
             // Move the entry back to the front of the cache
