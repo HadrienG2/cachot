@@ -218,10 +218,8 @@ impl PairLocalityTester {
 
 // ---
 
-use std::{
-    cmp::{Ord, Ordering},
-    collections::BinaryHeap,
-};
+use rand::prelude::*;
+use std::collections::BTreeMap;
 
 /// Configure the level of debugging features from brute force path search.
 ///
@@ -281,51 +279,24 @@ pub fn search_best_path(
         cost_so_far: cache::Cost,
     }
     //
+    type RoundedPriority = usize;
+    //
     impl PartialPath {
         // Relative priority of exploring this path, higher is more important
-        fn priority(&self) -> f32 {
-            self.path.len() as f32 - self.cost_so_far
+        fn priority(&self) -> RoundedPriority {
+            // Increasing path length weight means that the highest priority is
+            // put on seeing paths through the end (which allows discarding
+            // them), decreasing means that the highest priority is put on
+            // following through the paths that are most promizing in terms of
+            // cache cost (which tends to favor a more breadth-first approach as
+            // the first curve points are free of cache costs).
+            (1.3 * self.path.len() as f32 - self.cost_so_far).round() as _
         }
     }
-    //
-    impl PartialEq for PartialPath {
-        fn eq(&self, other: &Self) -> bool {
-            self.priority().eq(&other.priority())
-        }
-    }
-    //
-    impl PartialOrd for PartialPath {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            self.priority().partial_cmp(&other.priority())
-        }
-    }
-    //
-    impl Eq for PartialPath {}
-    //
-    impl Ord for PartialPath {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.priority().partial_cmp(&other.priority()).unwrap()
-        }
-    }
-    //
-    // TODO: Then we can switch to an ordered map from (path length, path cost)
-    //       to a list of (path, path cache), based on the same ordering
-    //       heuristic, which would allow us to pick one of the best paths
-    //       randomly instead of deterministcally. This seems like a good
-    //       strategy to avoid unnecessary regularity in the logic (which
-    //       reduces the odds of finding an original solution quickly).
-    //
-    //       Finally, if we really want the algorithm to think outside the box,
-    //       we could use an unordered map from (path length, path cost,
-    //       number of paths) to a list of (path, path_cache), which would allow
-    //       allow us to pick the (path length, path cost) at random through
-    //       weighted index sampling, using number of paths as part of our
-    //       weight since when all other things are equal, more paths mean more
-    //       possibilities.
     //
     #[derive(Default)]
     struct PartialPaths {
-        storage: BinaryHeap<PartialPath>,
+        storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
     }
     //
     impl PartialPaths {
@@ -334,11 +305,19 @@ pub fn search_best_path(
         }
 
         fn push(&mut self, path: PartialPath) {
-            self.storage.push(path);
+            let same_priority_paths = self.storage.entry(path.priority()).or_default();
+            same_priority_paths.push(path);
         }
 
-        fn pop(&mut self) -> Option<PartialPath> {
-            self.storage.pop()
+        fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
+            let highest_priority_paths = self.storage.values_mut().rev().next()?;
+            debug_assert!(!highest_priority_paths.is_empty());
+            let path_idx = rng.gen_range(0..highest_priority_paths.len());
+            let path = highest_priority_paths.remove(path_idx);
+            if highest_priority_paths.is_empty() {
+                self.storage.remove(&path.priority());
+            }
+            Some(path)
         }
     }
     //
@@ -372,11 +351,12 @@ pub fn search_best_path(
     // on that path, and pushing any further incomplete path that this creates
     // into our list of next actions.
     let mut best_path = Vec::new();
+    let mut rng = rand::thread_rng();
     while let Some(PartialPath {
         path,
         cache_model,
         cost_so_far,
-    }) = partial_paths.pop()
+    }) = partial_paths.pop(&mut rng)
     {
         // Indicate which partial path was chosen
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
@@ -384,6 +364,20 @@ pub fn search_best_path(
                 "    - Currently on partial path {:?} with cache cost {}",
                 path, cost_so_far
             );
+        }
+
+        // Ignore that path if we found another solution which is so good that
+        // it's not worth exploring anymore.
+        if cost_so_far > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (cost_so_far == best_cost))
+        {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                println!(
+                    "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
+                    path.len(),
+                    path_length
+                );
+            }
+            continue;
         }
 
         // Enumerate all possible next points, the constraints on them being...
@@ -453,7 +447,7 @@ pub fn search_best_path(
                         println!(
                             "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
                             path.len() + 1,
-                            path.capacity()
+                            path_length
                         );
                     }
                     continue;
