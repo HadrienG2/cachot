@@ -346,6 +346,63 @@ pub fn search_best_path(
         }
     }
 
+    // Precompute the neighbors of every point of the [x, y] domain
+    //
+    // The constraints on them being...
+    // - Next point should be within max_radius of current [x, y] position
+    // - Next point should remain within the iteration domain (no greater
+    //   than num_feeds, and y >= x).
+    //
+    // TODO: Use a bit-packed format where we only give a starting x, then every
+    //       word represents a sets of packed x's words and the y's are bits.
+    //       The starting x should be aligned with respect to the number of
+    //       x's in a word, i.e. if we can store 8 values of x in a word,
+    //       then the starting x should be rounded down to a multiple of 8.
+    //
+    //       Make sure that the number of feeds is smaller than the number of
+    //       bits in a top-level word (as it should be).
+    //
+    //       Then, in PartialPath, store a table of all the points which a path
+    //       has not yet been through in a similar format.
+    //
+    //       Finally, provide a way to compute the intersection of bits which
+    //       are one in the neighbor table and the "not been there" table, and
+    //       to iterate over the (curr_x, curr,y) pairs within it.
+    //
+    //       The point of doing all this is that we get a data structure which
+    //       only eats up very little extra space in each PartialPath, but still
+    //       allows greatly speeding up the search of which neighbors of a point
+    //       we've been through bit parallelism.
+    //
+    let mut neighbors = vec![vec![]; num_feeds as usize * num_feeds as usize];
+    let linear_idx = |curr_x, curr_y| curr_y as usize * num_feeds as usize + curr_x as usize;
+    for curr_x in 0..num_feeds {
+        for curr_y in curr_x..num_feeds {
+            for next_x in
+                curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds)
+            {
+                for next_y in curr_y.saturating_sub(max_radius).max(next_x)
+                    ..(curr_y + max_radius + 1).min(num_feeds)
+                {
+                    // Loop invariants
+                    debug_assert!(next_x < num_feeds);
+                    debug_assert!(next_y < num_feeds);
+                    debug_assert!(
+                        (next_x as isize - curr_x as isize).abs() as FeedIdx <= max_radius
+                    );
+                    debug_assert!(
+                        (next_y as isize - curr_y as isize).abs() as FeedIdx <= max_radius
+                    );
+                    debug_assert!(next_y >= next_x);
+                    if [next_x, next_y] != [curr_x, curr_y] {
+                        neighbors[linear_idx(curr_x, curr_y)].push([next_x, next_y]);
+                    }
+                }
+            }
+        }
+    }
+    let neighborhood = |curr_x, curr_y| neighbors[linear_idx(curr_x, curr_y)].iter().copied();
+
     // Next we iterate as long as we have incomplete paths by taking the most
     // promising path so far, considering all the next steps that can be taken
     // on that path, and pushing any further incomplete path that this creates
@@ -381,117 +438,106 @@ pub fn search_best_path(
         }
 
         // Enumerate all possible next points, the constraints on them being...
-        // - Next point should be within max_radius of current [x, y] position
-        // - Next point should remain within the iteration domain (no greater
-        //   than num_feeds, and y >= x).
         // - Next point should not be any point we've previously been through
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
         //
-        // TODO: If there is a performance bottleneck in enumerating those
-        //       indices, we could memoize a list of neighbours of each point of
-        //       the iteration domain, as they are always the same.
+        // TODO: Once the neighborhood is bit-packed, perform binary
+        //       intersection before iterating over it, see above.
         //
         let &[curr_x, curr_y] = path.last().unwrap();
-        for next_x in curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds) {
-            for next_y in curr_y.saturating_sub(max_radius).max(next_x)
-                ..(curr_y + max_radius + 1).min(num_feeds)
+        for [next_x, next_y] in neighborhood(curr_x, curr_y) {
+            // Enumeration tracking
+            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                println!("      * Trying [{}, {}]...", next_x, next_y);
+            }
+
+            // Have we been there before ?
+            //
+            // TODO: This happens to be a performance bottleneck in profiles,
+            //       speed it up via the above strategy. Replace current logging
+            //       with a logging of the neighborhood before filtering.
+            //
+            if path
+                .iter()
+                .find(|[prev_x, prev_y]| *prev_x == next_x && *prev_y == next_y)
+                .is_some()
             {
-                // Loop invariants
-                debug_assert!(next_x < num_feeds);
-                debug_assert!(next_y < num_feeds);
-                debug_assert!((next_x as isize - curr_x as isize).abs() as FeedIdx <= max_radius);
-                debug_assert!((next_y as isize - curr_y as isize).abs() as FeedIdx <= max_radius);
-                debug_assert!(next_y >= next_x);
-
-                // Loop tracking
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                    println!("      * Trying [{}, {}]...", next_x, next_y);
+                    println!("      * That's going circles, forget it.");
                 }
+                continue;
+            }
 
-                // Have we been there before ?
-                if path
-                    .iter()
-                    .find(|[prev_x, prev_y]| *prev_x == next_x && *prev_y == next_y)
-                    .is_some()
-                {
-                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                        println!("      * That's going circles, forget it.");
-                    }
-                    continue;
+            // Is it worthwhile to go there?
+            //
+            // TODO: We could consider introducing a stricter cutoff here,
+            //       based on the idea that if your partial cache cost is
+            //       already X and you have still N steps left to perform,
+            //       you're unlikely to beat the best cost.
+            //
+            //       But that's hard to do due to how chaotically the cache
+            //       performs, with most cache misses being at the end of
+            //       the curve.
+            //
+            //       Maybe we could at least track how well our best curve
+            //       so far performed at each step, and have a quality
+            //       cutoff based on that + a tolerance.
+            //
+            let mut next_cache = cache_model.clone();
+            let mut next_cost = cost_so_far + next_cache.simulate_access(next_x);
+            next_cost += next_cache.simulate_access(next_y);
+            if next_cost > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (next_cost == best_cost))
+            {
+                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                    println!(
+                        "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
+                        path.len() + 1,
+                        path_length
+                    );
                 }
+                continue;
+            }
 
-                // Is it worthwhile to go there?
-                //
-                // TODO: We could consider introducing a stricter cutoff here,
-                //       based on the idea that if your partial cache cost is
-                //       already X and you have still N steps left to perform,
-                //       you're unlikely to beat the best cost.
-                //
-                //       But that's hard to do due to how chaotically the cache
-                //       performs, with most cache misses being at the end of
-                //       the curve.
-                //
-                //       Maybe we could at least track how well our best curve
-                //       so far performed at each step, and have a quality
-                //       cutoff based on that + a tolerance.
-                //
-                let mut next_cache = cache_model.clone();
-                let mut next_cost = cost_so_far + next_cache.simulate_access(next_x);
-                next_cost += next_cache.simulate_access(next_y);
-                if next_cost > best_cost
-                    || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (next_cost == best_cost))
-                {
-                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+            // Are we finished ?
+            let next_path_len = path.len() + 1;
+            let make_next_path = || {
+                let mut next_path = path.clone();
+                next_path.push([next_x, next_y]);
+                next_path
+            };
+            if next_path_len == path_length {
+                if next_cost < best_cost {
+                    best_path = make_next_path();
+                    best_cost = next_cost;
+                    if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                         println!(
-                            "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
-                            path.len() + 1,
-                            path_length
+                            "  * Reached new cache cost record {} with path {:?}",
+                            best_cost, best_path
                         );
                     }
-                    continue;
-                }
-
-                // Are we finished ?
-                let next_path_len = path.len() + 1;
-                let make_next_path = || {
-                    let mut next_path = path.clone();
-                    next_path.push([next_x, next_y]);
-                    next_path
-                };
-                if next_path_len == path_length {
-                    if next_cost < best_cost {
-                        best_path = make_next_path();
-                        best_cost = next_cost;
-                        if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
-                            println!(
-                                "  * Reached new cache cost record {} with path {:?}",
-                                best_cost, best_path
-                            );
-                        }
-                    } else {
-                        debug_assert_eq!(next_cost, best_cost);
-                        if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
-                            println!(
-                                "  * Found a path that matches current cache cost constraint: {:?}",
-                                make_next_path(),
-                            );
-                        }
+                } else {
+                    debug_assert_eq!(next_cost, best_cost);
+                    if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
+                        println!(
+                            "  * Found a path that matches current cache cost constraint: {:?}",
+                            make_next_path(),
+                        );
                     }
-                    continue;
                 }
-
-                // Otherwise, schedule searching further down this path
-                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                    println!("      * That seems reasonable, we'll explore that path further...");
-                }
-                partial_paths.push(PartialPath {
-                    path: make_next_path(),
-                    cache_model: next_cache,
-                    cost_so_far: next_cost,
-                });
+                continue;
             }
+
+            // Otherwise, schedule searching further down this path
+            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                println!("      * That seems reasonable, we'll explore that path further...");
+            }
+            partial_paths.push(PartialPath {
+                path: make_next_path(),
+                cache_model: next_cache,
+                cost_so_far: next_cost,
+            });
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
