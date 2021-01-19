@@ -98,7 +98,7 @@ fn main() {
             for max_radius in 1..num_feeds {
                 println!("- Using next step search radius {}", max_radius);
                 if let Some((cost, _paths)) =
-                    search_best_paths(1, num_feeds, entry_size, max_radius, best_cost)
+                    search_best_paths(num_feeds, entry_size, max_radius, best_cost)
                 {
                     println!("  * Found better paths with cache cost {}", cost);
                     best_cost = cost;
@@ -218,12 +218,25 @@ impl PairLocalityTester {
 
 // ---
 
+/// Configure the level of debugging output from brute force path search.
+///
+/// This must be a const because brute force search is a CPU intensive process
+/// that cannot afford to be constantly testing run-time variables.
+///
+/// 0 = Don't log anything.
+/// 1 = Log search goals, top-level search progress, and the first path that
+///     achieves a new cache cost record.
+/// 2 = Log every path that successfully matches the current cache cost record.
+/// 3 = Log every time we take a step on a path.
+/// 4 = Log the process of searching for a next step on a path.
+///
+const BRUTE_FORCE_DEBUG_LEVEL: u8 = 1;
+
 /// Enumerate the possible paths through a 2D iteration domain where the
 /// distance between two points is no greater than max_radius, using brute force
 /// to look for a strategy which is better than our best strategy so far
 /// according to cache simulation.
 fn search_best_paths(
-    debug_level: usize,
     num_feeds: FeedIdx,
     entry_size: usize,
     max_radius: FeedIdx,
@@ -231,7 +244,7 @@ fn search_best_paths(
 ) -> Option<(cache::Cost, Vec<Vec<[FeedIdx; 2]>>)> {
     // Make sure that brute force search doesn't re-discover our previous strategy
     best_cost -= 1.0;
-    if debug_level >= 1 {
+    if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
         println!(
             "  * We must be better than the previous search so the cost must be <={}",
             best_cost
@@ -247,7 +260,7 @@ fn search_best_paths(
     let mut paths = Vec::with_capacity(path_length);
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
-            if debug_level >= 2 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                 println!("  * Searching paths from [{}, {}]", start_x, start_y);
             }
             // We start a path at that point, along with matching cache simulation
@@ -260,7 +273,6 @@ fn search_best_paths(
             debug_assert_eq!(path_cost, 0.0, "Cache is unreasonably small");
             // ...and we recursively explore all paths from that point
             enumerate_paths_impl(
-                debug_level,
                 num_feeds,
                 max_radius,
                 path,
@@ -281,7 +293,6 @@ fn search_best_paths(
 }
 //
 fn enumerate_paths_impl(
-    debug_level: usize,
     num_feeds: FeedIdx,
     max_radius: FeedIdx,
     path: Vec<[FeedIdx; 2]>,
@@ -291,7 +302,7 @@ fn enumerate_paths_impl(
     best_cost: &mut cache::Cost,
 ) {
     // Check if we reached a full path yet
-    if debug_level >= 3 {
+    if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
         println!(
             "    - Currently on path {:?} with partial cache cost {}",
             path, path_cost
@@ -300,7 +311,7 @@ fn enumerate_paths_impl(
     let path_length = path.capacity();
     if path.len() == path_length {
         if path_cost < *best_cost {
-            if debug_level >= 1 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                 println!(
                     "  * Reached new cache cost record {} with path {:?}",
                     path_cost, path
@@ -310,7 +321,9 @@ fn enumerate_paths_impl(
             *best_cost = path_cost;
         } else {
             debug_assert_eq!(path_cost, *best_cost);
-            if ((debug_level >= 1) && (paths.len() == 0)) || (debug_level >= 2) {
+            if ((BRUTE_FORCE_DEBUG_LEVEL >= 1) && (paths.len() == 0))
+                || (BRUTE_FORCE_DEBUG_LEVEL >= 2)
+            {
                 println!(
                     "  * Found a path that matches the cache cost constraint: {:?}",
                     path
@@ -330,8 +343,12 @@ fn enumerate_paths_impl(
     // - The total path cache cost is not allowed to go above the best path
     //   cache cost that we've observed so far (otherwise that path is less
     //   interesting than the best path).
-    if debug_level >= 3 {
-        println!("    - Let's investigate next steps");
+    //
+    // TODO: We could probably apply some memoization at that stage, what we
+    //       should memoize depends on what it is exactly that takes time.
+    //
+    if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
+        println!("    - Not done yet, let's investigate next steps");
     }
     let &[curr_x, curr_y] = path.last().unwrap();
     for next_x in curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds) {
@@ -344,7 +361,7 @@ fn enumerate_paths_impl(
             debug_assert!((next_x as isize - curr_x as isize).abs() as FeedIdx <= max_radius);
             debug_assert!((next_y as isize - curr_y as isize).abs() as FeedIdx <= max_radius);
             debug_assert!(next_y >= next_x);
-            if debug_level >= 4 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * Trying [{}, {}]...", next_x, next_y);
             }
 
@@ -354,7 +371,7 @@ fn enumerate_paths_impl(
                 .find(|[prev_x, prev_y]| *prev_x == next_x && *prev_y == next_y)
                 .is_some()
             {
-                if debug_level >= 4 {
+                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That's going circles, forget it.");
                 }
                 continue;
@@ -365,7 +382,7 @@ fn enumerate_paths_impl(
             let mut next_cost = path_cost + next_cache.simulate_access(next_x);
             next_cost += next_cache.simulate_access(next_y);
             if next_cost > *best_cost {
-                if debug_level >= 4 {
+                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!(
                         "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
                         path.len() + 1,
@@ -376,7 +393,7 @@ fn enumerate_paths_impl(
             }
 
             // If so, continue recursively searching more paths from that point
-            if debug_level >= 4 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * That seems reasonable, let's explore that path further...");
             }
             let mut next_path = path.clone();
@@ -385,7 +402,6 @@ fn enumerate_paths_impl(
             debug_assert_eq!(next_path.capacity(), path_length);
             next_path.push([next_x, next_y]);
             enumerate_paths_impl(
-                debug_level,
                 num_feeds,
                 max_radius,
                 next_path,
@@ -394,12 +410,12 @@ fn enumerate_paths_impl(
                 paths,
                 best_cost,
             );
-            if debug_level >= 3 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
                 println!("    - Back to path {:?}", path);
             }
         }
     }
-    if debug_level >= 3 {
+    if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
         println!("    - Done exploring possibilities from current path");
     }
 }
