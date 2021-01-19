@@ -357,25 +357,27 @@ pub fn search_best_path(
         cost_so_far,
     }) = partial_paths.pop()
     {
-        // Otherwise, enumerate all possible next points, the constraints on these
-        // being that...
-        // - Next point should be within max_radius of the current [x, y] position
-        // - Next point should remain within the iteration domain (no greater than
-        //   num_feeds and y >= x).
+        // Indicate which partial path was chosen
+        if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
+            println!(
+                "    - Currently on partial path {:?} with cache cost {}",
+                path, cost_so_far
+            );
+        }
+
+        // Enumerate all possible next points, the constraints on them being...
+        // - Next point should be within max_radius of current [x, y] position
+        // - Next point should remain within the iteration domain (no greater
+        //   than num_feeds, and y >= x).
         // - Next point should not be any point we've previously been through
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
         //
-        // TODO: We could probably apply some memoization at that stage, what we
-        //       should memoize depends on what it is exactly that takes time.
+        // TODO: If there is a performance bottleneck in enumerating those
+        //       indices, we could memoize a list of neighbours of each point of
+        //       the iteration domain, as they are always the same.
         //
-        if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
-            println!(
-                "    - Currently on path {:?} with partial cache cost {}",
-                path, cost_so_far
-            );
-        }
         let &[curr_x, curr_y] = path.last().unwrap();
         for next_x in curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds) {
             for next_y in curr_y.saturating_sub(max_radius).max(next_x)
@@ -406,6 +408,20 @@ pub fn search_best_path(
                 }
 
                 // Is it worthwhile to go there?
+                //
+                // TODO: We could consider introducing a stricter cutoff here,
+                //       based on the idea that if your partial cache cost is
+                //       already X and you have still N steps left to perform,
+                //       you're unlikely to beat the best cost.
+                //
+                //       But that's hard to do due to how chaotically the cache
+                //       performs, with most cache misses being at the end of
+                //       the curve.
+                //
+                //       Maybe we could at least track how well our best curve
+                //       so far performed at each step, and have a quality
+                //       cutoff based on that + a tolerance.
+                //
                 let mut next_cache = cache_model.clone();
                 let mut next_cost = cost_so_far + next_cache.simulate_access(next_x);
                 next_cost += next_cache.simulate_access(next_y);
@@ -423,12 +439,13 @@ pub fn search_best_path(
                 }
 
                 // Are we finished ?
+                let next_path_len = path.len() + 1;
                 let make_next_path = || {
                     let mut next_path = path.clone();
                     next_path.push([next_x, next_y]);
                     next_path
                 };
-                if path.len() == path_length - 1 {
+                if next_path_len == path_length {
                     if next_cost < best_cost {
                         best_path = make_next_path();
                         best_cost = next_cost;
@@ -450,7 +467,7 @@ pub fn search_best_path(
                     continue;
                 }
 
-                // Otherwise, continue recursively searching more paths from that point
+                // Otherwise, schedule searching further down this path
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That seems reasonable, we'll explore that path further...");
                 }
