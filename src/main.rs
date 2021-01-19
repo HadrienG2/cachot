@@ -318,8 +318,10 @@ pub fn search_best_path(
     //       Finally, if we really want the algorithm to think outside the box,
     //       we could use an unordered map from (path length, path cost,
     //       number of paths) to a list of (path, path_cache), which would allow
-    //       would allow us to pick the (path length, path cost) at random
-    //       through weighted index sampling, using number of paths as a guide.
+    //       allow us to pick the (path length, path cost) at random through
+    //       weighted index sampling, using number of paths as part of our
+    //       weight since when all other things are equal, more paths mean more
+    //       possibilities.
     //
     let mut partial_paths = BinaryHeap::new();
 
@@ -328,8 +330,8 @@ pub fn search_best_path(
     //
     // - To match the output of other algorithms, we want y >= x.
     // - Starting from a point (x, y) is geometrically equivalent to starting
-    //   from the symmetric point (y, x), so we don't need to explore both of
-    //   these starting points to find the optimal solution.
+    //   from the symmetric point (num_points-y, num_points-x), so we don't need
+    //   to explore both of these starting points to find the optimal solution.
     //
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
