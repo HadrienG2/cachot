@@ -323,7 +323,26 @@ pub fn search_best_path(
     //       weight since when all other things are equal, more paths mean more
     //       possibilities.
     //
-    let mut partial_paths = BinaryHeap::new();
+    #[derive(Default)]
+    struct PartialPaths {
+        storage: BinaryHeap<PartialPath>,
+    }
+    //
+    impl PartialPaths {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn push(&mut self, path: PartialPath) {
+            self.storage.push(path);
+        }
+
+        fn pop(&mut self) -> Option<PartialPath> {
+            self.storage.pop()
+        }
+    }
+    //
+    let mut partial_paths = PartialPaths::new();
 
     // We seed the path search algorithm by enumerating every possible starting
     // point for a path, under the following contraints:
