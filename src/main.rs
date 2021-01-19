@@ -236,7 +236,7 @@ const BRUTE_FORCE_DEBUG_LEVEL: u8 = 1;
 /// distance between two points is no greater than max_radius, using brute force
 /// to look for a strategy which is better than our best strategy so far
 /// according to cache simulation.
-fn search_best_paths(
+pub fn search_best_paths(
     num_feeds: FeedIdx,
     entry_size: usize,
     max_radius: FeedIdx,
@@ -302,12 +302,6 @@ fn enumerate_paths_impl(
     best_cost: &mut cache::Cost,
 ) {
     // Check if we reached a full path yet
-    if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
-        println!(
-            "    - Currently on path {:?} with partial cache cost {}",
-            path, path_cost
-        );
-    }
     let path_length = path.capacity();
     if path.len() == path_length {
         if path_cost < *best_cost {
@@ -325,7 +319,7 @@ fn enumerate_paths_impl(
                 || (BRUTE_FORCE_DEBUG_LEVEL >= 2)
             {
                 println!(
-                    "  * Found a path that matches the cache cost constraint: {:?}",
+                    "  * Found a path that matches current cache cost constraint: {:?}",
                     path
                 );
             }
@@ -348,7 +342,10 @@ fn enumerate_paths_impl(
     //       should memoize depends on what it is exactly that takes time.
     //
     if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
-        println!("    - Not done yet, let's investigate next steps");
+        println!(
+            "    - Currently on path {:?} with partial cache cost {}",
+            path, path_cost
+        );
     }
     let &[curr_x, curr_y] = path.last().unwrap();
     for next_x in curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds) {
