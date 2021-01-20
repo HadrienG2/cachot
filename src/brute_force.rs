@@ -352,11 +352,13 @@ impl PartialPath {
     //
     pub fn new(cache_model: &CacheModel, num_feeds: FeedIdx, start: FeedPair) -> Self {
         let path = vec![start];
+
         let mut cache_entries = cache_model.start_simulation();
         for &feed in start.iter() {
             let access_cost = cache_model.simulate_access(&mut cache_entries, feed);
             debug_assert_eq!(access_cost, 0.0);
         }
+
         let num_pairs = num_feeds as usize * num_feeds as usize;
         let num_words = num_pairs / Self::word_size() as usize
             + (num_pairs % Self::word_size() as usize != 0) as usize;
@@ -371,6 +373,7 @@ impl PartialPath {
                 current_word
             })
             .collect();
+
         Self {
             path,
             visited_pairs,
@@ -462,11 +465,14 @@ impl PartialPath {
             next_cost,
             next_cache,
         } = next_step_eval;
+
         let mut next_path = self.path.clone();
         next_path.push(next_step);
+
         let mut next_visited_pairs = self.visited_pairs.clone();
         let (word, bit) = Self::coord_to_bit_index(num_feeds, &next_step);
         next_visited_pairs[word] |= 1 << bit;
+
         Self {
             path: next_path,
             visited_pairs: next_visited_pairs,
@@ -478,7 +484,7 @@ impl PartialPath {
     /// Finish this path with a last step
     //
     // NOTE: This operation is rare (unless extra debugging output is enabled)
-    //       and can be quite slow
+    //       and can therefore be quite slow.
     //
     pub fn finish_path(&self, last_step: FeedPair) -> Path {
         let mut final_path = self.path.clone();
@@ -520,6 +526,7 @@ impl PartialPaths {
 
     /// Record a new partial path
     pub fn push(&mut self, path: PartialPath) {
+        // TODO: Don't create Vecs if we can reuse them from morgue (see below)
         let same_priority_paths = self.storage.entry(Self::priorize(&path)).or_default();
         same_priority_paths.push(path);
     }
@@ -528,11 +535,18 @@ impl PartialPaths {
     pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
         let highest_priority_paths = self.storage.values_mut().rev().next()?;
         debug_assert!(!highest_priority_paths.is_empty());
+
+        // TODO: If randomness becomes expensive, only resort to it
+        //       occasionally and pick the last path (which is cheapest to pop)
+        //       the rest of the time.
         let path_idx = rng.gen_range(0..highest_priority_paths.len());
         let path = highest_priority_paths.remove(path_idx);
+
         if highest_priority_paths.is_empty() {
+            // TODO: Don't drop Vecs, clear them and throw them into a morgue
             self.storage.remove(&Self::priorize(&path));
         }
+
         Some(path)
     }
 }
