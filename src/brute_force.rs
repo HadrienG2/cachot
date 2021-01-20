@@ -331,7 +331,7 @@ impl PartialPath {
 
     /// Tell how long the path is
     //
-    // NOTE: This operation is super hot and must be very fast
+    // NOTE: This operation is hot and must be fast
     //
     pub fn len(&self) -> usize {
         self.path.len()
@@ -339,7 +339,7 @@ impl PartialPath {
 
     /// Get the last path entry
     //
-    // NOTE: This operation is super hot and must be very fast
+    // NOTE: This operation is hot and must be fast
     //
     pub fn last_step(&self) -> &FeedPair {
         self.path.last().unwrap()
@@ -385,7 +385,7 @@ impl PartialPath {
 
     /// Get the accumulated cache cost of following this path so far
     //
-    // NOTE: This operation is super hot and must be very fast
+    // NOTE: This operation is hot and must be fast
     //
     pub fn cost_so_far(&self) -> cache::Cost {
         self.cost_so_far
@@ -421,7 +421,7 @@ impl PartialPath {
     // FIXME: Don't require the new cache cost and entries, rework the code so
     //        that evaluate_next_step already has done the necessary work.
     //
-    // NOTE: This operation can be a bit slower than others, but not too much
+    // NOTE: This operation is relatively hot and must be quite fast
     //
     pub fn commit_next_step(
         &self,
