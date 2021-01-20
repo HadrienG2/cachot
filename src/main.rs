@@ -5,6 +5,9 @@ use crate::cache::CacheModel;
 use genawaiter::{stack::let_gen, yield_};
 use space_filler::{hilbert, morton, CurveIdx};
 
+/// Integer type used for counting radio feeds
+type FeedIdx = space_filler::Coordinate;
+
 fn main() {
     #[rustfmt::skip]
     const TESTED_NUM_FEEDS: &'static [FeedIdx] = &[
@@ -115,9 +118,6 @@ fn main() {
 }
 
 // ---
-
-/// Integer type used for counting radio feeds
-type FeedIdx = space_filler::Coordinate;
 
 /// Test harness for evaluating the locality of several feed pair iterators and
 /// picking the best of them.
@@ -353,26 +353,24 @@ pub fn search_best_path(
     // - Next point should remain within the iteration domain (no greater
     //   than num_feeds, and y >= x).
     //
-    // TODO: Use a bit-packed format where we only give a starting x, then every
-    //       word represents a sets of packed x's words and the y's are bits.
-    //       The starting x should be aligned with respect to the number of
-    //       x's in a word, i.e. if we can store 8 values of x in a word,
-    //       then the starting x should be rounded down to a multiple of 8.
+    // TODO: Only store the starting x and, for every x after that, the sequence
+    //       of ranges of Y that we must go through. This minimizes memory
+    //       traffic and compiler unknowns while achieving the intended goal of
+    //       reducing the complexity of the inner loop's iteration logic.
     //
-    //       Make sure that the number of feeds is smaller than the number of
-    //       bits in a top-level word (as it should be).
+    //       We'll need to drop the test for x=y in exchange for this.
     //
-    //       Then, in PartialPath, store a table of all the points which a path
-    //       has not yet been through in a similar format.
+    //       In PartialPath, store a table of all points which a path has not
+    //       yet been through in a bit-packed format where every word represents
+    //       a sets of packed x's words and the y's are bits.
     //
-    //       Finally, provide a way to compute the intersection of bits which
-    //       are one in the neighbor table and the "not been there" table, and
-    //       to iterate over the (curr_x, curr,y) pairs within it.
+    //       During the neighbor search loop, take every x and y in the
+    //       specified range, and test the corresponding bit of the packed
+    //       table described above.
     //
-    //       The point of doing all this is that we get a data structure which
-    //       only eats up very little extra space in each PartialPath, but still
-    //       allows greatly speeding up the search of which neighbors of a point
-    //       we've been through bit parallelism.
+    //       This should speed up the compiler work of testing whether a path
+    //       has been through a certain point, while using minimal space (64
+    //       bits per paths for 8 feeds).
     //
     let mut neighbors = vec![vec![]; num_feeds as usize * num_feeds as usize];
     let linear_idx = |curr_x, curr_y| curr_y as usize * num_feeds as usize + curr_x as usize;
@@ -442,10 +440,6 @@ pub fn search_best_path(
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
-        //
-        // TODO: Once the neighborhood is bit-packed, perform binary
-        //       intersection before iterating over it, see above.
-        //
         let &[curr_x, curr_y] = path.last().unwrap();
         for [next_x, next_y] in neighborhood(curr_x, curr_y) {
             // Enumeration tracking
@@ -456,8 +450,7 @@ pub fn search_best_path(
             // Have we been there before ?
             //
             // TODO: This happens to be a performance bottleneck in profiles,
-            //       speed it up via the above strategy. Replace current logging
-            //       with a logging of the neighborhood before filtering.
+            //       speed it up via the above strategy.
             //
             if path
                 .iter()
@@ -484,6 +477,12 @@ pub fn search_best_path(
             //       Maybe we could at least track how well our best curve
             //       so far performed at each step, and have a quality
             //       cutoff based on that + a tolerance.
+            //
+            // TODO: Also, we should introduce a sort of undo mechanism (e.g.
+            //       an accessor that tells the cache position of a variable and
+            //       a mutator that allows us to reset it) in order to delay
+            //       memory allocation until the point where we're sure that we
+            //       do need to do the cloning.
             //
             let mut next_cache = cache_model.clone();
             let mut next_cost = cost_so_far + next_cache.simulate_access(next_x);
