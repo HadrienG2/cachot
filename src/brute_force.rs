@@ -356,7 +356,8 @@ impl PartialPath {
         let path = vec![start];
         let mut cache_entries = cache_model.start_simulation();
         for &feed in start.iter() {
-            debug_assert_eq!(cache_model.simulate_access(&mut cache_entries, feed), 0.0);
+            let access_cost = cache_model.simulate_access(&mut cache_entries, feed);
+            debug_assert_eq!(access_cost, 0.0);
         }
         let num_pairs = num_feeds as usize * num_feeds as usize;
         let num_words = num_pairs / Self::word_size() as usize
