@@ -9,7 +9,7 @@ use crate::{
 /// picking the best of them.
 pub struct PairLocalityTester {
     debug_level: usize,
-    entry_size: usize,
+    cache_model: CacheModel,
     best_iterator: Option<(String, cache::Cost)>,
 }
 //
@@ -18,7 +18,7 @@ impl PairLocalityTester {
     pub fn new(debug_level: usize, entry_size: usize) -> Self {
         Self {
             debug_level,
-            entry_size,
+            cache_model: CacheModel::new(entry_size),
             best_iterator: None,
         }
     }
@@ -32,7 +32,7 @@ impl PairLocalityTester {
         if self.debug_level > 0 {
             println!("\nTesting feed pair iterator \"{}\"...", name);
         }
-        let mut cache_model = CacheModel::new(self.entry_size);
+        let mut cache_entries = self.cache_model.start_simulation();
         let mut total_cost = 0.0;
         let mut feed_load_count = 0;
         for feed_pair in feed_pair_iterator {
@@ -41,7 +41,7 @@ impl PairLocalityTester {
             }
             let mut pair_cost = 0.0;
             for feed in feed_pair.iter().copied() {
-                let feed_cost = cache_model.simulate_access(feed);
+                let feed_cost = self.cache_model.simulate_access(&mut cache_entries, feed);
                 if self.debug_level >= 2 {
                     println!("  * Accessed feed {} for cache cost {}", feed, feed_cost)
                 }

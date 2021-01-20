@@ -2,7 +2,7 @@
 //! iteration schemes designed for square lattices, via brute force search.
 
 use crate::{
-    cache::{self, CacheModel},
+    cache::{self, CacheEntries, CacheModel},
     FeedIdx,
 };
 use rand::prelude::*;
@@ -37,6 +37,13 @@ pub fn search_best_path(
     // Let's be reasonable here
     assert!(num_feeds > 1 && entry_size > 0 && max_radius >= 1 && best_cost > 0.0);
 
+    // Set up the cache model
+    let cache_model = CacheModel::new(entry_size);
+    debug_assert!(
+        cache_model.max_l1_entries() >= 3,
+        "Cache is unreasonably small"
+    );
+
     // In exhaustive mode, make sure that at least we don't re-discover one of
     // the previously discovered strategies.
     if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
@@ -60,15 +67,19 @@ pub fn search_best_path(
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
             let path = vec![[start_x, start_y]];
-            let mut cache_model = CacheModel::new(entry_size);
-            let mut cost_so_far = cache_model.simulate_access(start_x);
-            cost_so_far += cache_model.simulate_access(start_y);
-            // TODO: Should check that cache capacity is at least 3 feeds
-            debug_assert_eq!(cost_so_far, 0.0, "Cache is unreasonably small");
+            let mut cache_entries = cache_model.start_simulation();
+            debug_assert_eq!(
+                cache_model.simulate_access(&mut cache_entries, start_x),
+                0.0
+            );
+            debug_assert_eq!(
+                cache_model.simulate_access(&mut cache_entries, start_y),
+                0.0
+            );
             partial_paths.push(PartialPath {
                 path,
-                cache_model,
-                cost_so_far,
+                cache_entries,
+                cost_so_far: 0.0,
             });
         }
     }
@@ -154,7 +165,7 @@ pub fn search_best_path(
     let mut rng = rand::thread_rng();
     while let Some(PartialPath {
         path,
-        cache_model,
+        cache_entries,
         cost_so_far,
     }) = partial_paths.pop(&mut rng)
     {
@@ -243,9 +254,9 @@ pub fn search_best_path(
             //       memory allocation until the point where we're sure that we
             //       do need to do the cloning.
             //
-            let mut next_cache = cache_model.clone();
-            let mut next_cost = cost_so_far + next_cache.simulate_access(next_x);
-            next_cost += next_cache.simulate_access(next_y);
+            let mut next_cache = cache_entries.clone();
+            let mut next_cost = cost_so_far + cache_model.simulate_access(&mut next_cache, next_x);
+            next_cost += cache_model.simulate_access(&mut next_cache, next_y);
             if next_cost > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (next_cost == best_cost))
             {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
@@ -293,7 +304,7 @@ pub fn search_best_path(
             }
             partial_paths.push(PartialPath {
                 path: make_next_path(),
-                cache_model: next_cache,
+                cache_entries: next_cache,
                 cost_so_far: next_cost,
             });
         }
@@ -327,7 +338,7 @@ pub fn search_best_path(
 //
 struct PartialPath {
     path: Path,
-    cache_model: CacheModel,
+    cache_entries: CacheEntries,
     cost_so_far: cache::Cost,
 }
 //
