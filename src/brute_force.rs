@@ -99,6 +99,10 @@ pub fn search_best_path(
     //       yet been through in a bit-packed format where every word represents
     //       a sets of packed x's words and the y's are bits.
     //
+    //       Abstract away PartialPath's storage so that this table is
+    //       automatically kept up to date whenever new points are pushed into
+    //       the partial path.
+    //
     //       During the neighbor search loop, take every x and y in the
     //       specified range, and test the corresponding bit of the packed
     //       table described above.
