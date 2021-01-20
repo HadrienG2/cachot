@@ -321,12 +321,15 @@ struct PartialPath {
 }
 //
 impl PartialPath {
-    // Size of words in the visited_pairs bitvec
+    /// Size of words in the visited_pairs bitvec
+    //
+    // NOTE: This operation will be done at compile time
+    //
     const fn word_size() -> u32 {
         (std::mem::size_of::<usize>() * 8) as u32
     }
 
-    // Index of a certain coordinate in the visited_pairs bitvec
+    /// Index of a certain coordinate in the visited_pairs bitvec
     //
     // NOTE: This operation is super hot and must be very fast
     //
