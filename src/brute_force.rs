@@ -229,8 +229,8 @@ pub fn search_best_path(
             //       cache entry cloning until the point where we're sure that
             //       we do need to do the cloning.
             //
-            let (next_cost, next_entries) =
-                partial_path.evaluate_next_step(&cache_model, &next_step);
+            let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
+            let next_cost = next_step_eval.next_cost;
             if next_cost > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (next_cost == best_cost))
             {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
@@ -271,12 +271,7 @@ pub fn search_best_path(
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * That seems reasonable, we'll explore that path further...");
             }
-            partial_paths.push(partial_path.commit_next_step(
-                num_feeds,
-                next_step,
-                next_cost,
-                next_entries,
-            ));
+            partial_paths.push(partial_path.commit_next_step(num_feeds, next_step_eval));
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
@@ -437,15 +432,19 @@ impl PartialPath {
     pub fn evaluate_next_step(
         &self,
         cache_model: &CacheModel,
-        next_step: &FeedPair,
-    ) -> (cache::Cost, CacheEntries) {
+        &next_step: &FeedPair,
+    ) -> NextStepEvaluation {
         let mut next_cache = self.cache_entries.clone();
         let next_cost = self.cost_so_far
             + next_step
                 .iter()
                 .map(|&feed| cache_model.simulate_access(&mut next_cache, feed))
                 .sum::<f32>();
-        (next_cost, next_cache)
+        NextStepEvaluation {
+            next_step,
+            next_cost,
+            next_cache,
+        }
     }
 
     /// Create a new partial path which follows all the steps from this one,
@@ -457,13 +456,12 @@ impl PartialPath {
     //
     // NOTE: This operation is relatively hot and must be quite fast
     //
-    pub fn commit_next_step(
-        &self,
-        num_feeds: FeedIdx,
-        next_step: FeedPair,
-        next_cost: cache::Cost,
-        next_entries: CacheEntries,
-    ) -> Self {
+    pub fn commit_next_step(&self, num_feeds: FeedIdx, next_step_eval: NextStepEvaluation) -> Self {
+        let NextStepEvaluation {
+            next_step,
+            next_cost,
+            next_cache,
+        } = next_step_eval;
         let mut next_path = self.path.clone();
         next_path.push(next_step);
         let mut next_visited_pairs = self.visited_pairs.clone();
@@ -472,7 +470,7 @@ impl PartialPath {
         Self {
             path: next_path,
             visited_pairs: next_visited_pairs,
-            cache_entries: next_entries,
+            cache_entries: next_cache,
             cost_so_far: next_cost,
         }
     }
@@ -486,6 +484,13 @@ impl PartialPath {
         final_path.push(last_step);
         final_path
     }
+}
+
+/// Result of `PartialPath::evaluate_next_step()`
+struct NextStepEvaluation {
+    next_step: FeedPair,
+    next_cost: cache::Cost,
+    next_cache: CacheEntries,
 }
 
 #[derive(Default)]
