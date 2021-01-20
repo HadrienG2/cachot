@@ -69,7 +69,11 @@ pub fn search_best_path(
     let mut partial_paths = PartialPaths::new();
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
-            partial_paths.push(PartialPath::new(&cache_model, [start_x, start_y]));
+            partial_paths.push(PartialPath::new(
+                &cache_model,
+                num_feeds,
+                [start_x, start_y],
+            ));
         }
     }
 
@@ -183,7 +187,7 @@ pub fn search_best_path(
             }
 
             // Have we been there before ?
-            if partial_path.contains(&next_step) {
+            if partial_path.contains(num_feeds, &next_step) {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That's going circles, forget it.");
                 }
@@ -267,7 +271,12 @@ pub fn search_best_path(
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * That seems reasonable, we'll explore that path further...");
             }
-            partial_paths.push(partial_path.commit_next_step(next_step, next_cost, next_entries));
+            partial_paths.push(partial_path.commit_next_step(
+                num_feeds,
+                next_step,
+                next_cost,
+                next_entries,
+            ));
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
@@ -306,24 +315,66 @@ struct PartialPath {
     //       explored without being pruned due to excessive cache cast).
     //
     path: Path,
-    // TODO: Add a fast index of points that we've been through
+    visited_pairs: Box<[usize]>,
     cache_entries: CacheEntries,
     cost_so_far: cache::Cost,
 }
 //
 impl PartialPath {
+    // Size of words in the visited_pairs bitvec
+    const fn word_size() -> u32 {
+        (std::mem::size_of::<usize>() * 8) as u32
+    }
+
+    // Index of a certain coordinate in the visited_pairs bitvec
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
+    const fn coord_to_bit_index(num_feeds: FeedIdx, &[x, y]: &FeedPair) -> (usize, u32) {
+        let linear_index = y as usize * num_feeds as usize + x as usize;
+        let word_index = linear_index / Self::word_size() as usize;
+        let bit_index = (linear_index % Self::word_size() as usize) as u32;
+        (word_index, bit_index)
+    }
+
+    // Inverse of to_bit_index
+    //
+    // NOTE: This operation is very rare and can be slow
+    //
+    const fn bit_index_to_coord(num_feeds: FeedIdx, word: usize, bit: u32) -> FeedPair {
+        let linear_index = word * Self::word_size() as usize + bit as usize;
+        let y = (linear_index / (num_feeds as usize)) as FeedIdx;
+        let x = (linear_index % (num_feeds as usize)) as FeedIdx;
+        [x, y]
+    }
+
     /// Start a path
     //
     // NOTE: This operation is very rare and can be slow
     //
-    pub fn new(cache_model: &CacheModel, start: FeedPair) -> Self {
+    pub fn new(cache_model: &CacheModel, num_feeds: FeedIdx, start: FeedPair) -> Self {
         let path = vec![start];
         let mut cache_entries = cache_model.start_simulation();
         for &feed in start.iter() {
             debug_assert_eq!(cache_model.simulate_access(&mut cache_entries, feed), 0.0);
         }
+        let num_pairs = num_feeds as usize * num_feeds as usize;
+        let num_words = num_pairs / Self::word_size() as usize
+            + (num_pairs % Self::word_size() as usize != 0) as usize;
+        let visited_pairs = (0..num_words)
+            .map(|word| {
+                let mut current_word = 0;
+                for bit in (0..Self::word_size()).rev() {
+                    let [x, y] = Self::bit_index_to_coord(num_feeds, word, bit);
+                    let visited = (y < x) || ([x, y] == start);
+                    current_word = (current_word << 1) | (visited as usize);
+                }
+                current_word
+            })
+            .collect();
         Self {
             path,
+            visited_pairs,
             cache_entries,
             cost_so_far: 0.0,
         }
@@ -357,30 +408,9 @@ impl PartialPath {
     //
     // NOTE: This operation is super hot and must be very fast
     //
-    // TODO: This is currently a performance bottleneck, and here's how I
-    //       intend to resolve this bottleneck.
-    //
-    //       Store a table of all points which a path has not yet been through,
-    //       in a bit-packed format where every word represents a set of packed
-    //       x's words, of which the bits represent y's.
-    //
-    //       Abstract away PartialPath's storage so that this table is
-    //       automatically kept up to date whenever new points are pushed into
-    //       the partial path.
-    //
-    //       During the neighbor search loop, take every x and y in the
-    //       specified range, and test the corresponding bit of the packed
-    //       table described above.
-    //
-    //       This should speed up the compiler work of testing whether a path
-    //       has been through a certain point, while using minimal space (64
-    //       bits per paths for 8 feeds).
-    //
-    pub fn contains(&self, pair: &FeedPair) -> bool {
-        self.path
-            .iter()
-            .find(|&prev_pair| prev_pair == pair)
-            .is_some()
+    pub fn contains(&self, num_feeds: FeedIdx, pair: &FeedPair) -> bool {
+        let (word, bit) = Self::coord_to_bit_index(num_feeds, pair);
+        (self.visited_pairs[word] & (1 << bit)) != 0
     }
 
     /// Get the accumulated cache cost of following this path so far
@@ -425,14 +455,19 @@ impl PartialPath {
     //
     pub fn commit_next_step(
         &self,
+        num_feeds: FeedIdx,
         next_step: FeedPair,
         next_cost: cache::Cost,
         next_entries: CacheEntries,
     ) -> Self {
         let mut next_path = self.path.clone();
         next_path.push(next_step);
+        let mut next_visited_pairs = self.visited_pairs.clone();
+        let (word, bit) = Self::coord_to_bit_index(num_feeds, &next_step);
+        next_visited_pairs[word] |= 1 << bit;
         Self {
             path: next_path,
+            visited_pairs: next_visited_pairs,
             cache_entries: next_entries,
             cost_so_far: next_cost,
         }
