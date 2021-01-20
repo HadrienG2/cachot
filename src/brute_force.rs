@@ -477,7 +477,8 @@ impl PartialPath {
 
     /// Finish this path with a last step
     //
-    // NOTE: This operation is rare and can be slow
+    // NOTE: This operation is rare (unless extra debugging output is enabled)
+    //       and can be quite slow
     //
     pub fn finish_path(&self, last_step: FeedPair) -> Path {
         let mut final_path = self.path.clone();
