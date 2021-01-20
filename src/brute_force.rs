@@ -95,31 +95,15 @@ pub fn search_best_path(
     // We also provide a convenient iteration function that produces the
     // iterator of neighbors associated with a certain point from this storage.
     //
-    // TODO: In PartialPath, store a table of all points which a path has not
-    //       yet been through in a bit-packed format where every word represents
-    //       a sets of packed x's words and the y's are bits.
-    //
-    //       Abstract away PartialPath's storage so that this table is
-    //       automatically kept up to date whenever new points are pushed into
-    //       the partial path.
-    //
-    //       During the neighbor search loop, take every x and y in the
-    //       specified range, and test the corresponding bit of the packed
-    //       table described above.
-    //
-    //       This should speed up the compiler work of testing whether a path
-    //       has been through a certain point, while using minimal space (64
-    //       bits per paths for 8 feeds).
-    //
     let mut neighbors = vec![(0, vec![]); num_feeds as usize * num_feeds as usize];
     let linear_idx = |curr_x, curr_y| curr_y as usize * num_feeds as usize + curr_x as usize;
     for curr_x in 0..num_feeds {
         for curr_y in curr_x..num_feeds {
             let next_x_range =
                 curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds);
-            debug_assert!(next_x_range.end < num_feeds);
-            debug_assert!((curr_x as isize - next_x_range.start as isize) < max_radius as isize);
-            debug_assert!((next_x_range.end as isize - curr_x as isize) <= max_radius as isize);
+            debug_assert!(next_x_range.end <= num_feeds);
+            debug_assert!((curr_x as isize - next_x_range.start as isize) <= max_radius as isize);
+            debug_assert!((next_x_range.end as isize - curr_x as isize) <= max_radius as isize + 1);
 
             let (first_next_x, next_y_ranges) = &mut neighbors[linear_idx(curr_x, curr_y)];
             *first_next_x = next_x_range.start;
@@ -127,11 +111,13 @@ pub fn search_best_path(
             for next_x in next_x_range {
                 let next_y_range = curr_y.saturating_sub(max_radius).max(next_x)
                     ..(curr_y + max_radius + 1).min(num_feeds);
-                debug_assert!(next_y_range.end < num_feeds);
+                debug_assert!(next_y_range.end <= num_feeds);
                 debug_assert!(
-                    (curr_y as isize - next_y_range.start as isize) < max_radius as isize
+                    (curr_y as isize - next_y_range.start as isize) <= max_radius as isize
                 );
-                debug_assert!((next_y_range.end as isize - curr_y as isize) <= max_radius as isize);
+                debug_assert!(
+                    (next_y_range.end as isize - curr_y as isize) <= max_radius as isize + 1
+                );
                 debug_assert!(next_y_range.start >= next_x);
 
                 next_y_ranges.push(next_y_range);
@@ -159,7 +145,7 @@ pub fn search_best_path(
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             let mut path_display = String::new();
             for step in partial_path.iter_rev() {
-                write!(path_display, "{:?} -> ", step).unwrap();
+                write!(path_display, "{:?} <- ", step).unwrap();
             }
             path_display.push_str("END");
             println!(
@@ -197,10 +183,6 @@ pub fn search_best_path(
             }
 
             // Have we been there before ?
-            //
-            // TODO: This happens to be a performance bottleneck in profiles,
-            //       speed it up via the above strategy.
-            //
             if partial_path.contains(&next_step) {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That's going circles, forget it.");
@@ -240,8 +222,8 @@ pub fn search_best_path(
             // TODO: Also, we should introduce a sort of undo mechanism (e.g.
             //       an accessor that tells the cache position of a variable and
             //       a mutator that allows us to reset it) in order to delay
-            //       memory allocation until the point where we're sure that we
-            //       do need to do the cloning.
+            //       cache entry cloning until the point where we're sure that
+            //       we do need to do the cloning.
             //
             let (next_cost, next_entries) =
                 partial_path.evaluate_next_step(&cache_model, &next_step);
@@ -329,10 +311,11 @@ struct PartialPath {
     cost_so_far: cache::Cost,
 }
 //
-type RoundedPriority = usize;
-//
 impl PartialPath {
     /// Start a path
+    //
+    // NOTE: This operation is very rare and can be slow
+    //
     pub fn new(cache_model: &CacheModel, start: FeedPair) -> Self {
         let path = vec![start];
         let mut cache_entries = cache_model.start_simulation();
@@ -347,24 +330,52 @@ impl PartialPath {
     }
 
     /// Tell how long the path is
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
     pub fn len(&self) -> usize {
         self.path.len()
     }
 
     /// Get the last path entry
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
     pub fn last_step(&self) -> &FeedPair {
         self.path.last().unwrap()
     }
 
     /// Iterate over the path in reverse step order
-    ///
-    /// This operation may be slow, and is only intended for debug output.
-    ///
+    //
+    // NOTE: This operation can be slow, it is only intended for debug output.
+    //
     pub fn iter_rev(&self) -> impl Iterator<Item = &FeedPair> {
         self.path.iter().rev()
     }
 
     /// Tell whether a path contains a certain feed pair
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
+    // TODO: This is currently a performance bottleneck, and here's how I
+    //       intend to resolve this bottleneck.
+    //
+    //       Store a table of all points which a path has not yet been through,
+    //       in a bit-packed format where every word represents a set of packed
+    //       x's words, of which the bits represent y's.
+    //
+    //       Abstract away PartialPath's storage so that this table is
+    //       automatically kept up to date whenever new points are pushed into
+    //       the partial path.
+    //
+    //       During the neighbor search loop, take every x and y in the
+    //       specified range, and test the corresponding bit of the packed
+    //       table described above.
+    //
+    //       This should speed up the compiler work of testing whether a path
+    //       has been through a certain point, while using minimal space (64
+    //       bits per paths for 8 feeds).
+    //
     pub fn contains(&self, pair: &FeedPair) -> bool {
         self.path
             .iter()
@@ -373,6 +384,9 @@ impl PartialPath {
     }
 
     /// Get the accumulated cache cost of following this path so far
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
     pub fn cost_so_far(&self) -> cache::Cost {
         self.cost_so_far
     }
@@ -383,6 +397,8 @@ impl PartialPath {
     //
     // FIXME: Don't compute or return the new cache entries, instead create a
     //        mechanism for temporary cache operations that can be reverted.
+    //
+    // NOTE: This operation is super hot and must be very fast
     //
     pub fn evaluate_next_step(
         &self,
@@ -405,6 +421,8 @@ impl PartialPath {
     // FIXME: Don't require the new cache cost and entries, rework the code so
     //        that evaluate_next_step already has done the necessary work.
     //
+    // NOTE: This operation can be a bit slower than others, but not too much
+    //
     pub fn commit_next_step(
         &self,
         next_step: FeedPair,
@@ -421,6 +439,9 @@ impl PartialPath {
     }
 
     /// Finish this path with a last step
+    //
+    // NOTE: This operation is rare and can be slow
+    //
     pub fn finish_path(&self, last_step: FeedPair) -> Path {
         let mut final_path = self.path.clone();
         final_path.push(last_step);
@@ -432,6 +453,8 @@ impl PartialPath {
 struct PartialPaths {
     storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
 }
+//
+type RoundedPriority = usize;
 //
 impl PartialPaths {
     /// Create the collection
