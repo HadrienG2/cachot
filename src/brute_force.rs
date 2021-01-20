@@ -76,18 +76,26 @@ pub fn search_best_path(
     // Precompute the neighbors of every point of the [x, y] domain
     //
     // The constraints on them being...
+    //
     // - Next point should be within max_radius of current [x, y] position
     // - Next point should remain within the iteration domain (no greater
     //   than num_feeds, and y >= x).
     //
-    // TODO: Only store the starting x and, for every x after that, the sequence
-    //       of ranges of Y that we must go through. This minimizes memory
-    //       traffic and compiler unknowns while achieving the intended goal of
-    //       reducing the complexity of the inner loop's iteration logic.
+    // For each point, we store...
     //
-    //       We'll need to drop the test for x=y in exchange for this.
+    // - The x coordinate of the first neighbor
+    // - For this x coordinate and all subsequent ones, the range of y
+    //   coordinates of all neighbors that have this x coordinate.
     //
-    //       In PartialPath, store a table of all points which a path has not
+    // This should achieve the indended goal of moving the neighbor constraint
+    // logic out of the hot loop, without generating too much memory traffic
+    // associated with reading out neighbor coordinates, nor hiding valuable
+    // information about the next_x/next_y iteration pattern from the compiler.
+    //
+    // We also provide a convenient iteration function that produces the
+    // iterator of neighbors associated with a certain point from this storage.
+    //
+    // TODO: In PartialPath, store a table of all points which a path has not
     //       yet been through in a bit-packed format where every word represents
     //       a sets of packed x's words and the y's are bits.
     //
@@ -99,34 +107,40 @@ pub fn search_best_path(
     //       has been through a certain point, while using minimal space (64
     //       bits per paths for 8 feeds).
     //
-    let mut neighbors = vec![vec![]; num_feeds as usize * num_feeds as usize];
+    let mut neighbors = vec![(0, vec![]); num_feeds as usize * num_feeds as usize];
     let linear_idx = |curr_x, curr_y| curr_y as usize * num_feeds as usize + curr_x as usize;
     for curr_x in 0..num_feeds {
         for curr_y in curr_x..num_feeds {
-            for next_x in
-                curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds)
-            {
-                for next_y in curr_y.saturating_sub(max_radius).max(next_x)
-                    ..(curr_y + max_radius + 1).min(num_feeds)
-                {
-                    // Loop invariants
-                    debug_assert!(next_x < num_feeds);
-                    debug_assert!(next_y < num_feeds);
-                    debug_assert!(
-                        (next_x as isize - curr_x as isize).abs() as FeedIdx <= max_radius
-                    );
-                    debug_assert!(
-                        (next_y as isize - curr_y as isize).abs() as FeedIdx <= max_radius
-                    );
-                    debug_assert!(next_y >= next_x);
-                    if [next_x, next_y] != [curr_x, curr_y] {
-                        neighbors[linear_idx(curr_x, curr_y)].push([next_x, next_y]);
-                    }
-                }
+            let next_x_range =
+                curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds);
+            debug_assert!(next_x_range.end < num_feeds);
+            debug_assert!(curr_x as isize - next_x_range.start as isize <= max_radius as isize);
+            debug_assert!((next_x_range.end as isize - curr_x as isize) < max_radius as isize);
+
+            let (first_next_x, next_y_ranges) = &mut neighbors[linear_idx(curr_x, curr_y)];
+            *first_next_x = next_x_range.start;
+
+            for next_x in next_x_range {
+                let next_y_range = curr_y.saturating_sub(max_radius).max(next_x)
+                    ..(curr_y + max_radius + 1).min(num_feeds);
+                debug_assert!(next_y_range.end < num_feeds);
+                debug_assert!(curr_y as isize - next_y_range.start as isize <= max_radius as isize);
+                debug_assert!((next_y_range.end as isize - curr_y as isize) < max_radius as isize);
+                debug_assert!(next_y_range.start >= next_x);
+
+                next_y_ranges.push(next_y_range);
             }
         }
     }
-    let neighborhood = |curr_x, curr_y| neighbors[linear_idx(curr_x, curr_y)].iter().copied();
+    let neighborhood = |curr_x, curr_y| {
+        debug_assert!(curr_y >= curr_x);
+        let (first_next_x, ref next_y_ranges) = &neighbors[linear_idx(curr_x, curr_y)];
+        next_y_ranges.into_iter().cloned().enumerate().flat_map(
+            move |(next_x_offset, next_y_range)| {
+                next_y_range.map(move |next_y| [first_next_x + next_x_offset as u8, next_y])
+            },
+        )
+    };
 
     // Next we iterate as long as we have incomplete paths by taking the most
     // promising path so far, considering all the next steps that can be taken
@@ -169,7 +183,7 @@ pub fn search_best_path(
         //   interesting than the best path).
         let &[curr_x, curr_y] = path.last().unwrap();
         for [next_x, next_y] in neighborhood(curr_x, curr_y) {
-            // Enumeration tracking
+            // Log which neighbor we're looking at in verbose mode
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * Trying [{}, {}]...", next_x, next_y);
             }
@@ -208,8 +222,11 @@ pub fn search_best_path(
             //       We could then have the search loop start with a fast
             //       low-tolerance search, and resume with a slower
             //       high-tolerance search, ultimately getting to the point
-            //       where we can search without tolerance if we truly want the
-            //       best of the best curves.
+            //       where we can search with infinite tolerance if we truly
+            //       want the best of the best curves.
+            //
+            //       (note: for pairwise iteration that fits in L2 cache, a
+            //       tolerance of 2 is an infinite tolerance).
             //
             //       This requires a way to propagate the "best cost at every
             //       step" to the caller, instead of just the the best cost at
