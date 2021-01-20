@@ -6,7 +6,7 @@ use crate::{
     FeedIdx,
 };
 use rand::prelude::*;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Write};
 
 /// Configure the level of debugging features from brute force path search.
 ///
@@ -23,8 +23,11 @@ use std::collections::BTreeMap;
 ///
 const BRUTE_FORCE_DEBUG_LEVEL: u8 = 1;
 
+/// Pair of feeds
+pub type FeedPair = [FeedIdx; 2];
+
 /// Type for storing paths through the 2D pair space
-pub type Path = Vec<[FeedIdx; 2]>;
+pub type Path = Vec<FeedPair>;
 
 /// Use brute force to find a path which is better than our best strategy so far
 /// according to our cache simulation.
@@ -66,21 +69,7 @@ pub fn search_best_path(
     let mut partial_paths = PartialPaths::new();
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
-            let path = vec![[start_x, start_y]];
-            let mut cache_entries = cache_model.start_simulation();
-            debug_assert_eq!(
-                cache_model.simulate_access(&mut cache_entries, start_x),
-                0.0
-            );
-            debug_assert_eq!(
-                cache_model.simulate_access(&mut cache_entries, start_y),
-                0.0
-            );
-            partial_paths.push(PartialPath {
-                path,
-                cache_entries,
-                cost_so_far: 0.0,
-            });
+            partial_paths.push(PartialPath::new(&cache_model, [start_x, start_y]));
         }
     }
 
@@ -129,8 +118,8 @@ pub fn search_best_path(
             let next_x_range =
                 curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds);
             debug_assert!(next_x_range.end < num_feeds);
-            debug_assert!(curr_x as isize - next_x_range.start as isize <= max_radius as isize);
-            debug_assert!((next_x_range.end as isize - curr_x as isize) < max_radius as isize);
+            debug_assert!((curr_x as isize - next_x_range.start as isize) < max_radius as isize);
+            debug_assert!((next_x_range.end as isize - curr_x as isize) <= max_radius as isize);
 
             let (first_next_x, next_y_ranges) = &mut neighbors[linear_idx(curr_x, curr_y)];
             *first_next_x = next_x_range.start;
@@ -139,8 +128,10 @@ pub fn search_best_path(
                 let next_y_range = curr_y.saturating_sub(max_radius).max(next_x)
                     ..(curr_y + max_radius + 1).min(num_feeds);
                 debug_assert!(next_y_range.end < num_feeds);
-                debug_assert!(curr_y as isize - next_y_range.start as isize <= max_radius as isize);
-                debug_assert!((next_y_range.end as isize - curr_y as isize) < max_radius as isize);
+                debug_assert!(
+                    (curr_y as isize - next_y_range.start as isize) < max_radius as isize
+                );
+                debug_assert!((next_y_range.end as isize - curr_y as isize) <= max_radius as isize);
                 debug_assert!(next_y_range.start >= next_x);
 
                 next_y_ranges.push(next_y_range);
@@ -163,28 +154,30 @@ pub fn search_best_path(
     // into our list of next actions.
     let mut best_path = Path::new();
     let mut rng = rand::thread_rng();
-    while let Some(PartialPath {
-        path,
-        cache_entries,
-        cost_so_far,
-    }) = partial_paths.pop(&mut rng)
-    {
+    while let Some(partial_path) = partial_paths.pop(&mut rng) {
         // Indicate which partial path was chosen
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
+            let mut path_display = String::new();
+            for step in partial_path.iter_rev() {
+                write!(path_display, "{:?} -> ", step).unwrap();
+            }
+            path_display.push_str("END");
             println!(
-                "    - Currently on partial path {:?} with cache cost {}",
-                path, cost_so_far
+                "    - Currently on partial path {} with cache cost {}",
+                path_display,
+                partial_path.cost_so_far()
             );
         }
 
         // Ignore that path if we found another solution which is so good that
         // it's not worth exploring anymore.
-        if cost_so_far > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (cost_so_far == best_cost))
+        if partial_path.cost_so_far() > best_cost
+            || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (partial_path.cost_so_far() == best_cost))
         {
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!(
                     "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
-                    path.len(),
+                    partial_path.len(),
                     path_length
                 );
             }
@@ -196,11 +189,11 @@ pub fn search_best_path(
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
-        let &[curr_x, curr_y] = path.last().unwrap();
-        for [next_x, next_y] in neighborhood(curr_x, curr_y) {
+        let &[curr_x, curr_y] = partial_path.last_step();
+        for next_step in neighborhood(curr_x, curr_y) {
             // Log which neighbor we're looking at in verbose mode
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                println!("      * Trying [{}, {}]...", next_x, next_y);
+                println!("      * Trying {:?}...", next_step);
             }
 
             // Have we been there before ?
@@ -208,11 +201,7 @@ pub fn search_best_path(
             // TODO: This happens to be a performance bottleneck in profiles,
             //       speed it up via the above strategy.
             //
-            if path
-                .iter()
-                .find(|[prev_x, prev_y]| *prev_x == next_x && *prev_y == next_y)
-                .is_some()
-            {
+            if partial_path.contains(&next_step) {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That's going circles, forget it.");
                 }
@@ -254,15 +243,14 @@ pub fn search_best_path(
             //       memory allocation until the point where we're sure that we
             //       do need to do the cloning.
             //
-            let mut next_cache = cache_entries.clone();
-            let mut next_cost = cost_so_far + cache_model.simulate_access(&mut next_cache, next_x);
-            next_cost += cache_model.simulate_access(&mut next_cache, next_y);
+            let (next_cost, next_entries) =
+                partial_path.evaluate_next_step(&cache_model, &next_step);
             if next_cost > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (next_cost == best_cost))
             {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!(
                         "      * That exceeds cache cost goal with only {}/{} steps, ignore it.",
-                        path.len() + 1,
+                        partial_path.len() + 1,
                         path_length
                     );
                 }
@@ -270,15 +258,10 @@ pub fn search_best_path(
             }
 
             // Are we finished ?
-            let next_path_len = path.len() + 1;
-            let make_next_path = || {
-                let mut next_path = path.clone();
-                next_path.push([next_x, next_y]);
-                next_path
-            };
+            let next_path_len = partial_path.len() + 1;
             if next_path_len == path_length {
                 if next_cost < best_cost {
-                    best_path = make_next_path();
+                    best_path = partial_path.finish_path(next_step);
                     best_cost = next_cost;
                     if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                         println!(
@@ -291,7 +274,7 @@ pub fn search_best_path(
                     if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                         println!(
                             "  * Found a path that matches current cache cost constraint: {:?}",
-                            make_next_path(),
+                            partial_path.finish_path(next_step),
                         );
                     }
                 }
@@ -302,11 +285,7 @@ pub fn search_best_path(
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * That seems reasonable, we'll explore that path further...");
             }
-            partial_paths.push(PartialPath {
-                path: make_next_path(),
-                cache_entries: next_cache,
-                cost_so_far: next_cost,
-            });
+            partial_paths.push(partial_path.commit_next_step(next_step, next_cost, next_entries));
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
@@ -337,7 +316,15 @@ pub fn search_best_path(
 // priorizing the most promising tracks over others.
 //
 struct PartialPath {
+    // TODO: Use a singly linked list of Arc'd feed pairs as path storage in
+    //       order to limit storage use and speed up copies.
+    //
+    //       Yes, readout will be super slow, but that should be a very rare
+    //       operation (it only needs to be performed when a path has been fully
+    //       explored without being pruned due to excessive cache cast).
+    //
     path: Path,
+    // TODO: Add a fast index of points that we've been through
     cache_entries: CacheEntries,
     cost_so_far: cache::Cost,
 }
@@ -345,40 +332,138 @@ struct PartialPath {
 type RoundedPriority = usize;
 //
 impl PartialPath {
-    // Relative priority of exploring this path, higher is more important
-    fn priority(&self) -> RoundedPriority {
-        // Increasing path length weight means that the highest priority is
-        // put on seeing paths through the end (which allows discarding
-        // them), decreasing means that the highest priority is put on
-        // following through the paths that are most promizing in terms of
-        // cache cost (which tends to favor a more breadth-first approach as
-        // the first curve points are free of cache costs).
-        (1.3 * self.path.len() as f32 - self.cost_so_far).round() as _
+    /// Start a path
+    pub fn new(cache_model: &CacheModel, start: FeedPair) -> Self {
+        let path = vec![start];
+        let mut cache_entries = cache_model.start_simulation();
+        for &feed in start.iter() {
+            debug_assert_eq!(cache_model.simulate_access(&mut cache_entries, feed), 0.0);
+        }
+        Self {
+            path,
+            cache_entries,
+            cost_so_far: 0.0,
+        }
+    }
+
+    /// Tell how long the path is
+    pub fn len(&self) -> usize {
+        self.path.len()
+    }
+
+    /// Get the last path entry
+    pub fn last_step(&self) -> &FeedPair {
+        self.path.last().unwrap()
+    }
+
+    /// Iterate over the path in reverse step order
+    ///
+    /// This operation may be slow, and is only intended for debug output.
+    ///
+    pub fn iter_rev(&self) -> impl Iterator<Item = &FeedPair> {
+        self.path.iter().rev()
+    }
+
+    /// Tell whether a path contains a certain feed pair
+    pub fn contains(&self, pair: &FeedPair) -> bool {
+        self.path
+            .iter()
+            .find(|&prev_pair| prev_pair == pair)
+            .is_some()
+    }
+
+    /// Get the accumulated cache cost of following this path so far
+    pub fn cost_so_far(&self) -> cache::Cost {
+        self.cost_so_far
+    }
+
+    /// Given an extra feed pair, tell what the accumulated cache cost would
+    /// become if the path was completed by this pair, and what the cache
+    /// entries would then be.
+    //
+    // FIXME: Don't compute or return the new cache entries, instead create a
+    //        mechanism for temporary cache operations that can be reverted.
+    //
+    pub fn evaluate_next_step(
+        &self,
+        cache_model: &CacheModel,
+        next_step: &FeedPair,
+    ) -> (cache::Cost, CacheEntries) {
+        let mut next_cache = self.cache_entries.clone();
+        let next_cost = self.cost_so_far
+            + next_step
+                .iter()
+                .map(|&feed| cache_model.simulate_access(&mut next_cache, feed))
+                .sum::<f32>();
+        (next_cost, next_cache)
+    }
+
+    /// Create a new partial path which follows all the steps from this one,
+    /// plus an extra step for which the new cache cost and cache entries are
+    /// provided.
+    //
+    // FIXME: Don't require the new cache cost and entries, rework the code so
+    //        that evaluate_next_step already has done the necessary work.
+    //
+    pub fn commit_next_step(
+        &self,
+        next_step: FeedPair,
+        next_cost: cache::Cost,
+        next_entries: CacheEntries,
+    ) -> Self {
+        let mut next_path = self.path.clone();
+        next_path.push(next_step);
+        Self {
+            path: next_path,
+            cache_entries: next_entries,
+            cost_so_far: next_cost,
+        }
+    }
+
+    /// Finish this path with a last step
+    pub fn finish_path(&self, last_step: FeedPair) -> Path {
+        let mut final_path = self.path.clone();
+        final_path.push(last_step);
+        final_path
     }
 }
-//
+
 #[derive(Default)]
 struct PartialPaths {
     storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
 }
 //
 impl PartialPaths {
-    fn new() -> Self {
+    /// Create the collection
+    pub fn new() -> Self {
         Self::default()
     }
 
-    fn push(&mut self, path: PartialPath) {
-        let same_priority_paths = self.storage.entry(path.priority()).or_default();
+    /// Prioritize a certain path wrt others, higher is more important
+    pub fn priorize(path: &PartialPath) -> RoundedPriority {
+        // Increasing path length weight means that the highest priority is
+        // put on seeing paths through the end (which allows discarding
+        // them), decreasing means that the highest priority is put on
+        // following through the paths that are most promizing in terms of
+        // cache cost (which tends to favor a more breadth-first approach as
+        // the first curve points are free of cache costs).
+        (1.3 * path.len() as f32 - path.cost_so_far()).round() as _
+    }
+
+    /// Record a new partial path
+    pub fn push(&mut self, path: PartialPath) {
+        let same_priority_paths = self.storage.entry(Self::priorize(&path)).or_default();
         same_priority_paths.push(path);
     }
 
-    fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
+    /// Extract one of the highest-priority paths
+    pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
         let highest_priority_paths = self.storage.values_mut().rev().next()?;
         debug_assert!(!highest_priority_paths.is_empty());
         let path_idx = rng.gen_range(0..highest_priority_paths.len());
         let path = highest_priority_paths.remove(path_idx);
         if highest_priority_paths.is_empty() {
-            self.storage.remove(&path.priority());
+            self.storage.remove(&Self::priorize(&path));
         }
         Some(path)
     }
