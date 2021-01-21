@@ -1,6 +1,6 @@
 //! Minimal cache simulator for 2D iteration locality studies
 
-use crate::{FeedIdx, MAX_FEEDS};
+use crate::{FeedIdx, MAX_FEEDS, MAX_ORDERED_PAIRS};
 
 pub type Entry = FeedIdx;
 pub type Cost = f32;
@@ -33,16 +33,7 @@ pub struct CacheModel {
     // L3 capacity in entries
     l3_entries: usize,
 }
-
-/// CPU cache entries
-///
-/// Split from the main CacheModel so that we can have multiple cache
-/// simulations that efficiently follow the main cache model.
 //
-// Entries are ordered by access date, most recently accessed entry goes last
-//
-pub type CacheEntries = Vec<Entry>;
-
 impl CacheModel {
     /// Set up the cache model by telling the size of individual cache entries
     pub fn new(entry_size: usize) -> Self {
@@ -80,27 +71,27 @@ impl CacheModel {
     pub fn start_simulation(&self) -> CacheSimulation {
         CacheSimulation::new()
     }
-
-    /// Simulate loading an entry and return the cost in units of L1 cache miss
-    pub fn simulate_access(&self, sim: &mut CacheSimulation, entry: Entry) -> Cost {
-        self.cost_model(sim.access(entry))
-    }
 }
 
-/// CPU cache entries
+/// CPU cache simulation
 ///
-/// Split from the main CacheModel so that we can have multiple cache
-/// simulations that efficiently follow the main cache model.
+/// Split from the main CacheModel so that we can efficiently have multiple
+/// cache simulations that efficiently follow the same cache model.
 ///
 #[derive(Clone)]
 pub struct CacheSimulation {
-    clock: usize,
-    last_accesses: [usize; MAX_FEEDS as usize],
+    clock: CacheClock,
+    last_accesses: [CacheClock; MAX_FEEDS as usize],
 }
+//
+/// Clock type should be able to hold the max cache timestamp, which is twice
+/// the number of pairs, which itself is MAX_FEEDS * (MAX_FEEDS + 1) / 2
+type CacheClock = u16;
 //
 impl CacheSimulation {
     /// Set up some cache entries and a clock
     fn new() -> Self {
+        assert!(CacheClock::MAX as usize >= 2 * MAX_ORDERED_PAIRS + 1);
         Self {
             clock: 1,
             last_accesses: [0; MAX_FEEDS as usize],
@@ -121,11 +112,27 @@ impl CacheSimulation {
         }
     }
 
-    // Simulate a cache access and if the entry was accessed
+    /// Simulate a cache access and return previous entry age
     fn access(&mut self, entry: Entry) -> usize {
         let age = self.age(entry);
         self.last_accesses[entry as usize] = self.clock;
         self.clock += 1;
         age
     }
+
+    /// Simulate a cache access and return its cost
+    pub fn simulate_access(&mut self, model: &CacheModel, entry: Entry) -> Cost {
+        model.cost_model(self.access(entry))
+    }
+
+    // TODO: Provide a "speculate()" method, which returns a CacheSpeculation
+    //       that behaves like a CacheSimulation (and actually holds an inner
+    //       &-reference to the original simulation) but stores new accesses in
+    //       a small internal SpeculationBuffer (basically a glorified
+    //       [FeedIdx; 2]) and uses those access as an overlay on top of the
+    //       accesses held by CacheSimulation.
+    //
+    //       Then the CacheSpeculation has a `commit()` method, which produces a
+    //       new CacheSimulation that is as if we directly performed the
+    //       accesses on the inner CacheSimulation.
 }

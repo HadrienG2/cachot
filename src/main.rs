@@ -26,6 +26,12 @@ type FeedIdx = space_filler::Coordinate;
 ///
 pub(crate) const MAX_FEEDS: FeedIdx = 16;
 
+/// Maximum number of feed pairs
+const MAX_PAIRS: usize = MAX_FEEDS as usize * MAX_FEEDS as usize;
+
+/// Maximum number of ordered feed pairs
+const MAX_ORDERED_PAIRS: usize = MAX_FEEDS as usize * (MAX_FEEDS as usize + 1) / 2;
+
 fn main() {
     #[rustfmt::skip]
     const TESTED_NUM_FEEDS: &'static [FeedIdx] = &[

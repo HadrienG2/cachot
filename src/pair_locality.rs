@@ -32,7 +32,7 @@ impl PairLocalityTester {
         if self.debug_level > 0 {
             println!("\nTesting feed pair iterator \"{}\"...", name);
         }
-        let mut cache_entries = self.cache_model.start_simulation();
+        let mut cache_sim = self.cache_model.start_simulation();
         let mut total_cost = 0.0;
         let mut feed_load_count = 0;
         for feed_pair in feed_pair_iterator {
@@ -41,7 +41,7 @@ impl PairLocalityTester {
             }
             let mut pair_cost = 0.0;
             for feed in feed_pair.iter().copied() {
-                let feed_cost = self.cache_model.simulate_access(&mut cache_entries, feed);
+                let feed_cost = cache_sim.simulate_access(&self.cache_model, feed);
                 if self.debug_level >= 2 {
                     println!("  * Accessed feed {} for cache cost {}", feed, feed_cost)
                 }

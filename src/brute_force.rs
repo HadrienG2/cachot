@@ -3,7 +3,7 @@
 
 use crate::{
     cache::{self, CacheModel, CacheSimulation},
-    FeedIdx, MAX_FEEDS,
+    FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
 use rand::prelude::*;
 use std::{collections::BTreeMap, fmt::Write, rc::Rc};
@@ -298,9 +298,6 @@ const fn div_round_up(num: usize, denom: usize) -> usize {
     (num / denom) + (num % denom != 0) as usize
 }
 
-/// Maximum number of feed pairs
-const MAX_PAIRS: usize = MAX_FEEDS as usize * MAX_FEEDS as usize;
-
 /// Maximum number of machine words needed to store one bit per feed pair
 const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
@@ -366,7 +363,7 @@ impl PartialPath {
 
         let mut cache_sim = cache_model.start_simulation();
         for &feed in start.iter() {
-            let access_cost = cache_model.simulate_access(&mut cache_sim, feed);
+            let access_cost = cache_sim.simulate_access(&cache_model, feed);
             debug_assert_eq!(access_cost, 0.0);
         }
 
@@ -455,7 +452,7 @@ impl PartialPath {
         let next_cost = self.cost_so_far
             + next_step
                 .iter()
-                .map(|&feed| cache_model.simulate_access(&mut next_cache, feed))
+                .map(|&feed| next_cache.simulate_access(&cache_model, feed))
                 .sum::<f32>();
         NextStepEvaluation {
             next_step,
