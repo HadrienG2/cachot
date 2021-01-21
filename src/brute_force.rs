@@ -6,7 +6,7 @@ use crate::{
     FeedIdx,
 };
 use rand::prelude::*;
-use std::{collections::BTreeMap, fmt::Write};
+use std::{collections::BTreeMap, fmt::Write, rc::Rc};
 
 /// Configure the level of debugging features from brute force path search.
 ///
@@ -100,7 +100,8 @@ pub fn search_best_path(
     // iterator of neighbors associated with a certain point from this storage.
     //
     let mut neighbors = vec![(0, vec![]); num_feeds as usize * num_feeds as usize];
-    let linear_idx = |curr_x, curr_y| curr_y as usize * num_feeds as usize + curr_x as usize;
+    let linear_idx =
+        |&[curr_x, curr_y]: &FeedPair| curr_y as usize * num_feeds as usize + curr_x as usize;
     for curr_x in 0..num_feeds {
         for curr_y in curr_x..num_feeds {
             let next_x_range =
@@ -109,7 +110,7 @@ pub fn search_best_path(
             debug_assert!((curr_x as isize - next_x_range.start as isize) <= max_radius as isize);
             debug_assert!((next_x_range.end as isize - curr_x as isize) <= max_radius as isize + 1);
 
-            let (first_next_x, next_y_ranges) = &mut neighbors[linear_idx(curr_x, curr_y)];
+            let (first_next_x, next_y_ranges) = &mut neighbors[linear_idx(&[curr_x, curr_y])];
             *first_next_x = next_x_range.start;
 
             for next_x in next_x_range {
@@ -128,9 +129,9 @@ pub fn search_best_path(
             }
         }
     }
-    let neighborhood = |curr_x, curr_y| {
+    let neighborhood = |&[curr_x, curr_y]: &FeedPair| {
         debug_assert!(curr_y >= curr_x);
-        let (first_next_x, ref next_y_ranges) = &neighbors[linear_idx(curr_x, curr_y)];
+        let (first_next_x, ref next_y_ranges) = &neighbors[linear_idx(&[curr_x, curr_y])];
         next_y_ranges.into_iter().cloned().enumerate().flat_map(
             move |(next_x_offset, next_y_range)| {
                 next_y_range.map(move |next_y| [first_next_x + next_x_offset as u8, next_y])
@@ -179,8 +180,7 @@ pub fn search_best_path(
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
-        let &[curr_x, curr_y] = partial_path.last_step();
-        for next_step in neighborhood(curr_x, curr_y) {
+        for next_step in neighborhood(partial_path.last_step()) {
             // Log which neighbor we're looking at in verbose mode
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * Trying {:?}...", next_step);
@@ -286,34 +286,33 @@ pub fn search_best_path(
     }
 }
 
-// The amount of possible paths is ridiculously high (of the order of the
-// factorial of path_length), so it's extremely important to...
-//
-// - Finish exploring paths reasonably quickly, to free up RAM and update
-//   the "best cost" figure of merit, which in turn allow us to...
-// - Prune paths as soon as it becomes clear that they won't beat the
-//   current best cost.
-// - Explore promising paths first, and make sure we explore large areas of the
-//   path space quickly instead of perpetually staying in the same region of the
-//   space of possible paths like basic depth-first search would have us do.
-//
-// To help us with these goals, we store information about the paths which
-// we are in the process of exploring in a data structure which is allows
-// priorizing the most promising tracks over others.
-//
+// ---
+
+/// Path which we are in the process of exploring
 struct PartialPath {
-    // TODO: Use a singly linked list of Arc'd feed pairs as path storage in
-    //       order to limit storage use and speed up copies.
-    //
-    //       Yes, readout will be super slow, but that should be a very rare
-    //       operation (it only needs to be performed when a path has been fully
-    //       explored without being pruned due to excessive cache cast).
-    //
-    path: Path,
+    path: Rc<PathElems>,
+    path_len: usize,
     // TODO: Use const generics to avoid memory allocation & bound checks
     visited_pairs: Box<[usize]>,
     cache_entries: CacheEntries,
     cost_so_far: cache::Cost,
+}
+//
+/// Path elements are stored as a linked list to enable sharing of common nodes.
+///
+/// This should enable tremendous memory savings and faster path forking, both
+/// of which are very important, at the cost of...
+///
+/// - Slowing down path iteration, but outside of debug logging scenarios we
+///   only need that at the end of a path, and we don't reach the end of a path
+///   very often as most paths are discarded due to excessive cost.
+/// - Slowing down path length counting, which is more important. We address
+///   this by double-counting the length so that we don't need to traverse the
+///   list in order to know the length.
+///
+struct PathElems {
+    curr_step: FeedPair,
+    prev_steps: Option<Rc<PathElems>>,
 }
 //
 impl PartialPath {
@@ -352,7 +351,10 @@ impl PartialPath {
     // NOTE: This operation is very rare and can be slow
     //
     pub fn new(cache_model: &CacheModel, num_feeds: FeedIdx, start: FeedPair) -> Self {
-        let path = vec![start];
+        let path = Rc::new(PathElems {
+            curr_step: start,
+            prev_steps: None,
+        });
 
         let mut cache_entries = cache_model.start_simulation();
         for &feed in start.iter() {
@@ -377,6 +379,7 @@ impl PartialPath {
 
         Self {
             path,
+            path_len: 1,
             visited_pairs,
             cache_entries,
             cost_so_far: 0.0,
@@ -388,7 +391,7 @@ impl PartialPath {
     // NOTE: This operation is hot and must be fast
     //
     pub fn len(&self) -> usize {
-        self.path.len()
+        self.path_len
     }
 
     /// Get the last path entry
@@ -396,7 +399,7 @@ impl PartialPath {
     // NOTE: This operation is hot and must be fast
     //
     pub fn last_step(&self) -> &FeedPair {
-        self.path.last().unwrap()
+        &self.path.curr_step
     }
 
     /// Iterate over the path in reverse step order
@@ -404,7 +407,12 @@ impl PartialPath {
     // NOTE: This operation can be slow, it is only intended for debug output.
     //
     pub fn iter_rev(&self) -> impl Iterator<Item = &FeedPair> {
-        self.path.iter().rev()
+        let mut next_node = Some(&*self.path);
+        std::iter::from_fn(move || {
+            let node = next_node?;
+            next_node = node.prev_steps.as_ref().map(|rc| &**rc);
+            Some(&node.curr_step)
+        })
     }
 
     /// Tell whether a path contains a certain feed pair
@@ -469,8 +477,10 @@ impl PartialPath {
             next_cache,
         } = next_step_eval;
 
-        let mut next_path = self.path.clone();
-        next_path.push(next_step);
+        let next_path = Rc::new(PathElems {
+            curr_step: next_step,
+            prev_steps: Some(self.path.clone()),
+        });
 
         let mut next_visited_pairs = self.visited_pairs.clone();
         let (word, bit) = Self::coord_to_bit_index(num_feeds, &next_step);
@@ -479,6 +489,7 @@ impl PartialPath {
 
         Self {
             path: next_path,
+            path_len: self.path_len + 1,
             visited_pairs: next_visited_pairs,
             cache_entries: next_cache,
             cost_so_far: next_cost,
@@ -491,8 +502,11 @@ impl PartialPath {
     //       and can therefore be quite slow.
     //
     pub fn finish_path(&self, last_step: FeedPair) -> Path {
-        let mut final_path = self.path.clone();
-        final_path.push(last_step);
+        let mut final_path = vec![FeedPair::default(); self.path_len];
+        final_path[self.path_len - 1] = last_step;
+        for (i, step) in (0..self.path_len - 1).rev().zip(self.iter_rev()) {
+            final_path[i] = *step;
+        }
         final_path
     }
 }
@@ -504,7 +518,26 @@ struct NextStepEvaluation {
     next_cache: CacheEntries,
 }
 
+// ---
+
 /// PartialPath container that enables priorization and randomization
+///
+/// The amount of possible paths is ridiculously high (of the order of the
+/// factorial of path_length, which itself grows like the square of num_feeds),
+/// so it's extremely important to...
+///
+/// - Finish exploring paths reasonably quickly, to free up RAM and update
+///   the "best cost" figure of merit, which in turn allow us to...
+/// - Prune paths as soon as it becomes clear that they won't beat the
+///   current best cost.
+/// - Explore promising paths first, and make sure we explore large areas of the
+///   path space quickly instead of perpetually staying in the same region of
+///   the space of possible paths like depth-first search would have us do.
+///
+/// To help us with these goals, we store information about the paths which
+/// we are in the process of exploring in a data structure which allows
+/// priorizing the most promising tracks over others.
+///
 #[derive(Default)]
 struct PriorizedPartialPaths {
     storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
