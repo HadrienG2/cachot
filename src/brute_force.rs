@@ -414,6 +414,7 @@ impl PartialPath {
     pub fn contains(&self, num_feeds: FeedIdx, pair: &FeedPair) -> bool {
         let (word, bit) = Self::coord_to_bit_index(num_feeds, pair);
         // TODO: Make sure the bound check is elided, if not use get_unchecked
+        //       + an associated debug_assert.
         (self.visited_pairs[word] & (1 << bit)) != 0
     }
 
@@ -503,6 +504,7 @@ struct NextStepEvaluation {
     next_cache: CacheEntries,
 }
 
+/// PartialPath container that enables priorization and randomization
 #[derive(Default)]
 struct PriorizedPartialPaths {
     storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
