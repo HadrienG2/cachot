@@ -225,12 +225,6 @@ pub fn search_best_path(
             //       the last step, which anyway would be useful once we get to
             //       searching at multiple radii.
             //
-            // TODO: Also, we should introduce a sort of undo mechanism (e.g.
-            //       an accessor that tells the cache position of a variable and
-            //       a mutator that allows us to reset it) in order to delay
-            //       cache entry cloning until the point where we're sure that
-            //       we do need to do the cloning.
-            //
             let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
             let next_cost = next_step_eval.next_cost;
             if next_cost > best_cost || ((BRUTE_FORCE_DEBUG_LEVEL < 2) && (next_cost == best_cost))
@@ -438,9 +432,6 @@ impl PartialPath {
     /// become if the path was completed by this pair, and what the cache
     /// entries would then be.
     //
-    // FIXME: Don't compute or return the new cache entries, instead create a
-    //        mechanism for temporary cache operations that can be reverted.
-    //
     // NOTE: This operation is super hot and must be very fast
     //
     pub fn evaluate_next_step(
@@ -464,9 +455,6 @@ impl PartialPath {
     /// Create a new partial path which follows all the steps from this one,
     /// plus an extra step for which the new cache cost and cache entries are
     /// provided.
-    //
-    // FIXME: Don't require the new cache cost and entries, rework the code so
-    //        that evaluate_next_step already has done the necessary work.
     //
     // NOTE: This operation is relatively hot and must be quite fast
     //

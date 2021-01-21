@@ -124,15 +124,4 @@ impl CacheSimulation {
     pub fn simulate_access(&mut self, model: &CacheModel, entry: Entry) -> Cost {
         model.cost_model(self.access(entry))
     }
-
-    // TODO: Provide a "speculate()" method, which returns a CacheSpeculation
-    //       that behaves like a CacheSimulation (and actually holds an inner
-    //       &-reference to the original simulation) but stores new accesses in
-    //       a small internal SpeculationBuffer (basically a glorified
-    //       [FeedIdx; 2]) and uses those access as an overlay on top of the
-    //       accesses held by CacheSimulation.
-    //
-    //       Then the CacheSpeculation has a `commit()` method, which produces a
-    //       new CacheSimulation that is as if we directly performed the
-    //       accesses on the inner CacheSimulation.
 }
