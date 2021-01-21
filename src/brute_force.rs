@@ -543,7 +543,14 @@ struct NextStepEvaluation {
 ///
 #[derive(Default)]
 struct PriorizedPartialPaths {
+    // Main data structure
     storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
+
+    // Mechanism to reuse inner Vec allocations
+    storage_morgue: Vec<Vec<PartialPath>>,
+
+    // Mechanism to periodically trigger path selection randomization
+    randomness_clock: usize,
 }
 //
 type RoundedPriority = usize;
@@ -566,28 +573,58 @@ impl PriorizedPartialPaths {
     }
 
     /// Record a new partial path
+    #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
-        // TODO: Don't create Vecs if we can reuse them from morgue (see below)
-        let same_priority_paths = self.storage.entry(Self::priorize(&path)).or_default();
+        let storage_morgue = &mut self.storage_morgue;
+        let same_priority_paths = self
+            .storage
+            .entry(Self::priorize(&path))
+            .or_insert_with(|| {
+                if let Some(unused_vec) = storage_morgue.pop() {
+                    unused_vec
+                } else {
+                    Vec::new()
+                }
+            });
         same_priority_paths.push(path);
     }
 
     /// Extract one of the highest-priority paths
+    #[inline(always)]
     pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
-        let highest_priority_paths = self.storage.values_mut().rev().next()?;
+        // Find the set of highest priority paths
+        // TODO: Use last_entry once it is stable
+        use std::collections::btree_map::Entry;
+        let highest_priority = *self.storage.keys().rev().next()?;
+        let mut highest_priority_entry = match self.storage.entry(highest_priority) {
+            Entry::Vacant(_) => unreachable!(),
+            Entry::Occupied(entry) => entry,
+        };
+        let highest_priority_paths = highest_priority_entry.get_mut();
         debug_assert!(!highest_priority_paths.is_empty());
 
-        // TODO: If randomness becomes expensive, only resort to it
-        //       occasionally and pick the last path (which is cheapest to pop)
-        //       the rest of the time.
-        let path_idx = rng.gen_range(0..highest_priority_paths.len());
-        let path = highest_priority_paths.remove(path_idx);
+        // Normally, we pick the last path in the list, which is most efficient,
+        // but we regularly allow ourselves to pick a random path instead in
+        // order to make sure that the algorithm doesn't get stuck perpetually
+        // exploring the same region of the decision tree.
+        const RANDOM_PICK_RATE: usize = 1 << 5;
+        self.randomness_clock += 1;
+        let path = if self.randomness_clock % RANDOM_PICK_RATE != 0 {
+            highest_priority_paths.pop().unwrap()
+        } else {
+            let path_idx = rng.gen_range(0..highest_priority_paths.len());
+            highest_priority_paths.remove(path_idx)
+        };
 
+        // If the set of highest priority paths is now empty, we remove it, but
+        // keep the allocation around for re-use
         if highest_priority_paths.is_empty() {
-            // TODO: Don't drop Vecs, clear them and throw them into a morgue
-            self.storage.remove(&Self::priorize(&path));
+            let mut highest_priority_paths = highest_priority_entry.remove();
+            highest_priority_paths.clear();
+            self.storage_morgue.push(highest_priority_paths);
         }
 
+        // Finally, we return the chosen path
         Some(path)
     }
 }
