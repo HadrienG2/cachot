@@ -3,7 +3,7 @@
 
 use crate::{
     cache::{self, CacheEntries, CacheModel},
-    FeedIdx,
+    FeedIdx, MAX_FEEDS,
 };
 use rand::prelude::*;
 use std::{collections::BTreeMap, fmt::Write, rc::Rc};
@@ -38,7 +38,13 @@ pub fn search_best_path(
     mut best_cost: cache::Cost,
 ) -> Option<(cache::Cost, Path)> {
     // Let's be reasonable here
-    assert!(num_feeds > 1 && entry_size > 0 && max_radius >= 1 && best_cost > 0.0);
+    assert!(
+        num_feeds > 1
+            && num_feeds <= MAX_FEEDS
+            && entry_size > 0
+            && max_radius >= 1
+            && best_cost > 0.0
+    );
 
     // Set up the cache model
     let cache_model = CacheModel::new(entry_size);
@@ -69,11 +75,7 @@ pub fn search_best_path(
     let mut priorized_partial_paths = PriorizedPartialPaths::new();
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
-            priorized_partial_paths.push(PartialPath::new(
-                &cache_model,
-                num_feeds,
-                [start_x, start_y],
-            ));
+            priorized_partial_paths.push(PartialPath::new(&cache_model, [start_x, start_y]));
         }
     }
 
@@ -187,7 +189,7 @@ pub fn search_best_path(
             }
 
             // Have we been there before ?
-            if partial_path.contains(num_feeds, &next_step) {
+            if partial_path.contains(&next_step) {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That's going circles, forget it.");
                 }
@@ -271,7 +273,7 @@ pub fn search_best_path(
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * That seems reasonable, we'll explore that path further...");
             }
-            priorized_partial_paths.push(partial_path.commit_next_step(num_feeds, next_step_eval));
+            priorized_partial_paths.push(partial_path.commit_next_step(next_step_eval));
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
@@ -288,12 +290,25 @@ pub fn search_best_path(
 
 // ---
 
+/// Machine word size in bits
+const WORD_SIZE: u32 = (std::mem::size_of::<usize>() * 8) as u32;
+
+/// Integer division with upper rounding
+const fn div_round_up(num: usize, denom: usize) -> usize {
+    (num / denom) + (num % denom != 0) as usize
+}
+
+/// Maximum number of feed pairs
+const MAX_PAIRS: usize = MAX_FEEDS as usize * MAX_FEEDS as usize;
+
+/// Maximum number of machine words needed to store one bit per feed pair
+const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
+
 /// Path which we are in the process of exploring
 struct PartialPath {
     path: Rc<PathElems>,
     path_len: usize,
-    // TODO: Use const generics to avoid memory allocation & bound checks
-    visited_pairs: Box<[usize]>,
+    visited_pairs: [usize; MAX_PAIR_WORDS],
     cache_entries: CacheEntries,
     cost_so_far: cache::Cost,
 }
@@ -316,22 +331,14 @@ struct PathElems {
 }
 //
 impl PartialPath {
-    /// Size of words in the visited_pairs bitvec
-    //
-    // NOTE: This operation will be done at compile time
-    //
-    const fn word_size() -> u32 {
-        (std::mem::size_of::<usize>() * 8) as u32
-    }
-
     /// Index of a certain coordinate in the visited_pairs bitvec
     //
     // NOTE: This operation is super hot and must be very fast
     //
-    const fn coord_to_bit_index(num_feeds: FeedIdx, &[x, y]: &FeedPair) -> (usize, u32) {
-        let linear_index = y as usize * num_feeds as usize + x as usize;
-        let word_index = linear_index / Self::word_size() as usize;
-        let bit_index = (linear_index % Self::word_size() as usize) as u32;
+    const fn coord_to_bit_index(&[x, y]: &FeedPair) -> (usize, u32) {
+        let linear_index = y as usize * MAX_FEEDS as usize + x as usize;
+        let word_index = linear_index / WORD_SIZE as usize;
+        let bit_index = (linear_index % WORD_SIZE as usize) as u32;
         (word_index, bit_index)
     }
 
@@ -339,10 +346,10 @@ impl PartialPath {
     //
     // NOTE: This operation is very rare and can be slow
     //
-    const fn bit_index_to_coord(num_feeds: FeedIdx, word: usize, bit: u32) -> FeedPair {
-        let linear_index = word * Self::word_size() as usize + bit as usize;
-        let y = (linear_index / (num_feeds as usize)) as FeedIdx;
-        let x = (linear_index % (num_feeds as usize)) as FeedIdx;
+    const fn bit_index_to_coord(word: usize, bit: u32) -> FeedPair {
+        let linear_index = word * WORD_SIZE as usize + bit as usize;
+        let y = (linear_index / (MAX_FEEDS as usize)) as FeedIdx;
+        let x = (linear_index % (MAX_FEEDS as usize)) as FeedIdx;
         [x, y]
     }
 
@@ -350,7 +357,7 @@ impl PartialPath {
     //
     // NOTE: This operation is very rare and can be slow
     //
-    pub fn new(cache_model: &CacheModel, num_feeds: FeedIdx, start: FeedPair) -> Self {
+    pub fn new(cache_model: &CacheModel, start: FeedPair) -> Self {
         let path = Rc::new(PathElems {
             curr_step: start,
             prev_steps: None,
@@ -362,20 +369,16 @@ impl PartialPath {
             debug_assert_eq!(access_cost, 0.0);
         }
 
-        let num_pairs = num_feeds as usize * num_feeds as usize;
-        let num_words = num_pairs / Self::word_size() as usize
-            + (num_pairs % Self::word_size() as usize != 0) as usize;
-        let visited_pairs = (0..num_words)
-            .map(|word| {
-                let mut current_word = 0;
-                for bit in (0..Self::word_size()).rev() {
-                    let [x, y] = Self::bit_index_to_coord(num_feeds, word, bit);
-                    let visited = (y < x) || ([x, y] == start);
-                    current_word = (current_word << 1) | (visited as usize);
-                }
-                current_word
-            })
-            .collect();
+        let mut visited_pairs = [0; MAX_PAIR_WORDS];
+        for word in 0..MAX_PAIR_WORDS {
+            let mut current_word = 0;
+            for bit in (0..WORD_SIZE).rev() {
+                let [x, y] = Self::bit_index_to_coord(word, bit);
+                let visited = (y < x) || ([x, y] == start);
+                current_word = (current_word << 1) | (visited as usize);
+            }
+            visited_pairs[word] = current_word;
+        }
 
         Self {
             path,
@@ -419,8 +422,8 @@ impl PartialPath {
     //
     // NOTE: This operation is super hot and must be very fast
     //
-    pub fn contains(&self, num_feeds: FeedIdx, pair: &FeedPair) -> bool {
-        let (word, bit) = Self::coord_to_bit_index(num_feeds, pair);
+    pub fn contains(&self, pair: &FeedPair) -> bool {
+        let (word, bit) = Self::coord_to_bit_index(pair);
         debug_assert!(word < self.visited_pairs.len());
         (unsafe { self.visited_pairs.get_unchecked(word) } & (1 << bit)) != 0
     }
@@ -469,7 +472,7 @@ impl PartialPath {
     //
     // NOTE: This operation is relatively hot and must be quite fast
     //
-    pub fn commit_next_step(&self, num_feeds: FeedIdx, next_step_eval: NextStepEvaluation) -> Self {
+    pub fn commit_next_step(&self, next_step_eval: NextStepEvaluation) -> Self {
         let NextStepEvaluation {
             next_step,
             next_cost,
@@ -482,7 +485,7 @@ impl PartialPath {
         });
 
         let mut next_visited_pairs = self.visited_pairs.clone();
-        let (word, bit) = Self::coord_to_bit_index(num_feeds, &next_step);
+        let (word, bit) = Self::coord_to_bit_index(&next_step);
         // TODO: Make sure the bound check is elided or has negligible cost, if
         //       it is too expensive use get_unchecked.
         next_visited_pairs[word] |= 1 << bit;

@@ -9,6 +9,23 @@ use space_filler::{hilbert, morton, CurveIdx};
 /// Integer type used for counting radio feeds
 type FeedIdx = space_filler::Coordinate;
 
+/// Upper bound on the number of feeds that will be used
+///
+/// To reduce memory allocation and improve data locality, we would like to use
+/// fixed-sized data structures when the size depends on the number of feeds, as
+/// this parameter is known at compile time.
+///
+/// Unfortunately, Rust does not have const generics yet, and even the
+/// `min_const_generics` version that will be stabilized soon-ish is not
+/// powerful enough as it does not allow us to have a data structure whose size
+/// is a function of the number of feeds (such as, for example, a bitvec whose
+/// number of bits is equal to the number of feed pairs).
+///
+/// As a compromise until we get there, we will use an upper bound on the number
+/// of feeds that will be used in tests.
+///
+pub(crate) const MAX_FEEDS: FeedIdx = 16;
+
 fn main() {
     #[rustfmt::skip]
     const TESTED_NUM_FEEDS: &'static [FeedIdx] = &[
@@ -23,6 +40,10 @@ fn main() {
     let mut debug_level = 2;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
         println!("=== Testing with {} feeds ===\n", num_feeds);
+        assert!(
+            num_feeds <= MAX_FEEDS,
+            "Please update MAX_FEEDS for this configuration"
+        );
 
         // The L1 cache must be able to hold data for at least 3 feeds,
         // otherwise every access to a new pair will be a cache miss.
