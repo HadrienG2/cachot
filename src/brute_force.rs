@@ -66,10 +66,10 @@ pub fn search_best_path(
     //   from the symmetric point (num_points-y, num_points-x), so we don't need
     //   to explore both of these starting points to find the optimal solution.
     //
-    let mut partial_paths = PartialPaths::new();
+    let mut priorized_partial_paths = PriorizedPartialPaths::new();
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
-            partial_paths.push(PartialPath::new(
+            priorized_partial_paths.push(PartialPath::new(
                 &cache_model,
                 num_feeds,
                 [start_x, start_y],
@@ -144,14 +144,14 @@ pub fn search_best_path(
     // into our list of next actions.
     let mut best_path = Path::new();
     let mut rng = rand::thread_rng();
-    while let Some(partial_path) = partial_paths.pop(&mut rng) {
+    while let Some(partial_path) = priorized_partial_paths.pop(&mut rng) {
         // Indicate which partial path was chosen
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             let mut path_display = String::new();
             for step in partial_path.iter_rev() {
                 write!(path_display, "{:?} <- ", step).unwrap();
             }
-            path_display.push_str("END");
+            path_display.push_str("START");
             println!(
                 "    - Currently on partial path {} with cache cost {}",
                 path_display,
@@ -271,7 +271,7 @@ pub fn search_best_path(
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * That seems reasonable, we'll explore that path further...");
             }
-            partial_paths.push(partial_path.commit_next_step(num_feeds, next_step_eval));
+            priorized_partial_paths.push(partial_path.commit_next_step(num_feeds, next_step_eval));
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
@@ -310,6 +310,7 @@ struct PartialPath {
     //       explored without being pruned due to excessive cache cast).
     //
     path: Path,
+    // TODO: Use const generics to avoid memory allocation & bound checks
     visited_pairs: Box<[usize]>,
     cache_entries: CacheEntries,
     cost_so_far: cache::Cost,
@@ -412,6 +413,7 @@ impl PartialPath {
     //
     pub fn contains(&self, num_feeds: FeedIdx, pair: &FeedPair) -> bool {
         let (word, bit) = Self::coord_to_bit_index(num_feeds, pair);
+        // TODO: Make sure the bound check is elided, if not use get_unchecked
         (self.visited_pairs[word] & (1 << bit)) != 0
     }
 
@@ -471,6 +473,7 @@ impl PartialPath {
 
         let mut next_visited_pairs = self.visited_pairs.clone();
         let (word, bit) = Self::coord_to_bit_index(num_feeds, &next_step);
+        // TODO: Make sure the bound check is elided, if not use get_unchecked
         next_visited_pairs[word] |= 1 << bit;
 
         Self {
@@ -501,13 +504,13 @@ struct NextStepEvaluation {
 }
 
 #[derive(Default)]
-struct PartialPaths {
+struct PriorizedPartialPaths {
     storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
 }
 //
 type RoundedPriority = usize;
 //
-impl PartialPaths {
+impl PriorizedPartialPaths {
     /// Create the collection
     pub fn new() -> Self {
         Self::default()
