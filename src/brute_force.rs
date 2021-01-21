@@ -2,7 +2,7 @@
 //! iteration schemes designed for square lattices, via brute force search.
 
 use crate::{
-    cache::{self, CacheModel, CacheSimulation},
+    cache::{self, CacheModel, CacheSimulation, CacheSpeculation},
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
 use rand::prelude::*;
@@ -438,9 +438,6 @@ impl PartialPath {
     /// become if the path was completed by this pair, and what the cache
     /// entries would then be.
     //
-    // FIXME: Don't compute or return the new cache entries, instead create a
-    //        mechanism for temporary cache operations that can be reverted.
-    //
     // NOTE: This operation is super hot and must be very fast
     //
     pub fn evaluate_next_step(
@@ -448,7 +445,7 @@ impl PartialPath {
         cache_model: &CacheModel,
         &next_step: &FeedPair,
     ) -> NextStepEvaluation {
-        let mut next_cache = self.cache_sim.clone();
+        let mut next_cache = self.cache_sim.speculate();
         let next_cost = self.cost_so_far
             + next_step
                 .iter()
@@ -464,9 +461,6 @@ impl PartialPath {
     /// Create a new partial path which follows all the steps from this one,
     /// plus an extra step for which the new cache cost and cache entries are
     /// provided.
-    //
-    // FIXME: Don't require the new cache cost and entries, rework the code so
-    //        that evaluate_next_step already has done the necessary work.
     //
     // NOTE: This operation is relatively hot and must be quite fast
     //
@@ -492,7 +486,7 @@ impl PartialPath {
             path: next_path,
             path_len: self.path_len + 1,
             visited_pairs: next_visited_pairs,
-            cache_sim: next_cache,
+            cache_sim: next_cache.commit(),
             cost_so_far: next_cost,
         }
     }
@@ -513,10 +507,10 @@ impl PartialPath {
 }
 
 /// Result of `PartialPath::evaluate_next_step()`
-struct NextStepEvaluation {
+struct NextStepEvaluation<'simulation> {
     next_step: FeedPair,
     next_cost: cache::Cost,
-    next_cache: CacheSimulation,
+    next_cache: CacheSpeculation<'simulation>,
 }
 
 // ---
