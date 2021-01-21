@@ -421,9 +421,8 @@ impl PartialPath {
     //
     pub fn contains(&self, num_feeds: FeedIdx, pair: &FeedPair) -> bool {
         let (word, bit) = Self::coord_to_bit_index(num_feeds, pair);
-        // TODO: Make sure the bound check is elided, if not use get_unchecked
-        //       + an associated debug_assert.
-        (self.visited_pairs[word] & (1 << bit)) != 0
+        debug_assert!(word < self.visited_pairs.len());
+        (unsafe { self.visited_pairs.get_unchecked(word) } & (1 << bit)) != 0
     }
 
     /// Get the accumulated cache cost of following this path so far
@@ -484,7 +483,8 @@ impl PartialPath {
 
         let mut next_visited_pairs = self.visited_pairs.clone();
         let (word, bit) = Self::coord_to_bit_index(num_feeds, &next_step);
-        // TODO: Make sure the bound check is elided, if not use get_unchecked
+        // TODO: Make sure the bound check is elided or has negligible cost, if
+        //       it is too expensive use get_unchecked.
         next_visited_pairs[word] |= 1 << bit;
 
         Self {
