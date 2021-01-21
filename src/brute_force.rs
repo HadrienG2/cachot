@@ -2,7 +2,7 @@
 //! iteration schemes designed for square lattices, via brute force search.
 
 use crate::{
-    cache::{self, CacheEntries, CacheModel},
+    cache::{self, CacheModel, CacheSimulation},
     FeedIdx, MAX_FEEDS,
 };
 use rand::prelude::*;
@@ -306,10 +306,11 @@ const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
 /// Path which we are in the process of exploring
 struct PartialPath {
+    // TODO: Replace Rc with something that allows us to reuse the allocations
     path: Rc<PathElems>,
     path_len: usize,
     visited_pairs: [usize; MAX_PAIR_WORDS],
-    cache_entries: CacheEntries,
+    cache_sim: CacheSimulation,
     cost_so_far: cache::Cost,
 }
 //
@@ -363,9 +364,9 @@ impl PartialPath {
             prev_steps: None,
         });
 
-        let mut cache_entries = cache_model.start_simulation();
+        let mut cache_sim = cache_model.start_simulation();
         for &feed in start.iter() {
-            let access_cost = cache_model.simulate_access(&mut cache_entries, feed);
+            let access_cost = cache_model.simulate_access(&mut cache_sim, feed);
             debug_assert_eq!(access_cost, 0.0);
         }
 
@@ -384,7 +385,7 @@ impl PartialPath {
             path,
             path_len: 1,
             visited_pairs,
-            cache_entries,
+            cache_sim,
             cost_so_far: 0.0,
         }
     }
@@ -450,7 +451,7 @@ impl PartialPath {
         cache_model: &CacheModel,
         &next_step: &FeedPair,
     ) -> NextStepEvaluation {
-        let mut next_cache = self.cache_entries.clone();
+        let mut next_cache = self.cache_sim.clone();
         let next_cost = self.cost_so_far
             + next_step
                 .iter()
@@ -494,7 +495,7 @@ impl PartialPath {
             path: next_path,
             path_len: self.path_len + 1,
             visited_pairs: next_visited_pairs,
-            cache_entries: next_cache,
+            cache_sim: next_cache,
             cost_so_far: next_cost,
         }
     }
@@ -518,7 +519,7 @@ impl PartialPath {
 struct NextStepEvaluation {
     next_step: FeedPair,
     next_cost: cache::Cost,
-    next_cache: CacheEntries,
+    next_cache: CacheSimulation,
 }
 
 // ---

@@ -1,6 +1,6 @@
 //! Minimal cache simulator for 2D iteration locality studies
 
-use crate::FeedIdx;
+use crate::{FeedIdx, MAX_FEEDS};
 
 pub type Entry = FeedIdx;
 pub type Cost = f32;
@@ -77,35 +77,55 @@ impl CacheModel {
     }
 
     /// Start a cache simulation
-    pub fn start_simulation(&self) -> CacheEntries {
-        CacheEntries::new()
+    pub fn start_simulation(&self) -> CacheSimulation {
+        CacheSimulation::new()
     }
 
     /// Simulate loading an entry and return the cost in units of L1 cache miss
-    pub fn simulate_access(&self, entries: &mut CacheEntries, new_entry: Entry) -> Cost {
-        // Look up the entry in the cache
-        let entry_pos = entries.iter().rposition(|&item| item == new_entry);
+    pub fn simulate_access(&self, sim: &mut CacheSimulation, entry: Entry) -> Cost {
+        self.cost_model(sim.access(entry))
+    }
+}
 
-        // Was it found?
-        if let Some(entry_pos) = entry_pos {
-            // If so, compute entry age and deduce access cost
-            let entry_age = entries.len() - 1 - entry_pos;
-            let access_cost = self.cost_model(entry_age);
-
-            // Move the entry back to the front of the cache
-            entries.remove(entry_pos);
-            entries.push(new_entry);
-
-            // Return the access cost
-            access_cost
-        } else {
-            // If not, insert the entry in the cache
-            entries.push(new_entry);
-
-            // Report a zero cost. We don't want to penalize the first access in
-            // our cost model since it will have to happen no matter how good we
-            // are in our cache access pattern...
-            0.0
+/// CPU cache entries
+///
+/// Split from the main CacheModel so that we can have multiple cache
+/// simulations that efficiently follow the main cache model.
+///
+#[derive(Clone)]
+pub struct CacheSimulation {
+    clock: usize,
+    last_accesses: [usize; MAX_FEEDS as usize],
+}
+//
+impl CacheSimulation {
+    /// Set up some cache entries and a clock
+    fn new() -> Self {
+        Self {
+            clock: 1,
+            last_accesses: [0; MAX_FEEDS as usize],
         }
+    }
+
+    /// Check out how many other entries have been accessed since a cache entry
+    /// was last accessed, return 0 if the entry was never accessed.
+    fn age(&self, entry: Entry) -> usize {
+        let last_access_time = self.last_accesses[entry as usize];
+        if last_access_time == 0 {
+            0
+        } else {
+            self.last_accesses
+                .iter()
+                .filter(|&&access_time| access_time > last_access_time)
+                .count()
+        }
+    }
+
+    // Simulate a cache access and if the entry was accessed
+    fn access(&mut self, entry: Entry) -> usize {
+        let age = self.age(entry);
+        self.last_accesses[entry as usize] = self.clock;
+        self.clock += 1;
+        age
     }
 }
