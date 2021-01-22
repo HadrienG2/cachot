@@ -312,6 +312,7 @@ struct PartialPath {
     path_len: usize,
     visited_pairs: [usize; MAX_PAIR_WORDS],
     cache_sim: CacheSimulation,
+    cumulative_distance: StepDistance,
 }
 //
 /// Path elements are stored as a linked list to enable sharing of common nodes.
@@ -331,6 +332,9 @@ struct PathElems {
     curr_cost: cache::Cost,
     prev_steps: Option<Rc<PathElems>>,
 }
+//
+/// Total distance that was "walked" across a path step
+type StepDistance = f32;
 //
 impl PartialPath {
     /// Index of a certain coordinate in the visited_pairs bitvec
@@ -388,6 +392,7 @@ impl PartialPath {
             path_len: 1,
             visited_pairs,
             cache_sim,
+            cumulative_distance: 0.0,
         }
     }
 
@@ -397,6 +402,15 @@ impl PartialPath {
     //
     pub fn len(&self) -> usize {
         self.path_len
+    }
+
+    /// Tell what was the average size of every path step
+    pub fn average_step(&self) -> StepDistance {
+        if self.path_len == 1 {
+            1.0
+        } else {
+            self.cumulative_distance / (self.path_len - 1) as StepDistance
+        }
     }
 
     /// Get the last path entry
@@ -488,11 +502,22 @@ impl PartialPath {
         //       it is too expensive use get_unchecked.
         next_visited_pairs[word] |= 1 << bit;
 
+        let step_length = self
+            .last_step()
+            .iter()
+            .zip(next_step.iter())
+            .map(|(&curr_coord, &next_coord)| {
+                ((next_coord as StepDistance) - (curr_coord as StepDistance)).powi(2)
+            })
+            .sum::<StepDistance>()
+            .sqrt();
+
         Self {
             path: next_path,
             path_len: self.path_len + 1,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
+            cumulative_distance: self.cumulative_distance + step_length,
         }
     }
 }
@@ -550,13 +575,7 @@ impl PriorizedPartialPaths {
 
     /// Prioritize a certain path wrt others, higher is more important
     pub fn priorize(path: &PartialPath) -> Priority {
-        // Increasing path length weight means that the highest priority is
-        // put on seeing paths through the end (which allows discarding
-        // them), decreasing means that the highest priority is put on
-        // following through the paths that are most promizing in terms of
-        // cache cost (which tends to favor a more breadth-first approach as
-        // the first curve points are free of cache costs).
-        0.7 * path.len() as f32 - path.cost_so_far()
+        path.len() as f32 - path.cost_so_far() - 6.0 * (path.average_step() - 1.0)
     }
 
     /// Record a new partial path
