@@ -182,7 +182,6 @@ pub fn search_best_path(
             }
 
             // Display progress
-            path_counter += 1;
             if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
                 println!("  * Processed {}M path steps", path_counter / 1_000_000,);
 
@@ -213,6 +212,7 @@ pub fn search_best_path(
                     max_total_steps.log10()
                 );
             }
+            path_counter += 1;
 
             // Have we been there before ?
             if partial_path.contains(&next_step) {
@@ -578,7 +578,7 @@ impl PriorizedPartialPaths {
         // It's equally important to move forward and to avoid cache misses,
         // avoid complicated steps but it's okay to do a (1, 1) step if you can
         // avoid a cache miss that way.
-        path.len() as f32 - path.cost_so_far() - 2.0 * (path.average_step() - 1.0)
+        0.9 * path.len() as f32 - path.cost_so_far() - 2.0 * (path.average_step() - 1.0)
     }
 
     /// Record a new partial path
