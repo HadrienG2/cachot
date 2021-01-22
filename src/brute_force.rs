@@ -144,6 +144,7 @@ pub fn search_best_path(
     // into our list of next actions.
     let mut best_path = None;
     let mut rng = rand::thread_rng();
+    let mut path_counter = 0u64;
     while let Some(partial_path) = priorized_partial_paths.pop(&mut rng) {
         // Indicate which partial path was chosen
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
@@ -178,6 +179,39 @@ pub fn search_best_path(
             // Log which neighbor we're looking at in verbose mode
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!("      * Trying {:?}...", next_step);
+            }
+
+            // Display progress
+            path_counter += 1;
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
+                println!("  * Processed {}M path steps", path_counter / 1_000_000,);
+
+                let paths_by_len = priorized_partial_paths.paths_by_len();
+                let display_path_counts = |header, paths_by_len: &Vec<usize>| {
+                    print!("    - {:<25}: ", header);
+                    for partial_length in 1..path_length {
+                        print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                    }
+                    println!();
+                };
+                display_path_counts("Partial paths by length", &paths_by_len);
+                display_path_counts(
+                    "Priorized paths by length",
+                    &priorized_partial_paths.high_priority_paths_by_len(),
+                );
+
+                let mut max_next_steps = 1.0f64;
+                let mut max_total_steps = 0.0f64;
+                for partial_length in (1..path_length).rev() {
+                    max_next_steps *= (path_length - partial_length) as f64;
+                    max_total_steps += paths_by_len.get(partial_length - 1).copied().unwrap_or(0)
+                        as f64
+                        * max_next_steps;
+                }
+                println!(
+                    "    - Exhaustive search space  : 10^{} paths",
+                    max_total_steps.log10()
+                );
             }
 
             // Have we been there before ?
@@ -497,7 +531,7 @@ struct PriorizedPartialPaths {
     /// I tried using a BTreeMap before, but since we're always popping the last
     /// element and inserting close to the end, a sorted list is better.
     ///
-    storage: Vec<(RoundedPriority, Vec<PartialPath>)>,
+    storage: Vec<(Priority, Vec<PartialPath>)>,
 
     /// Mechanism to reuse inner Vec allocations
     storage_morgue: Vec<Vec<PartialPath>>,
@@ -506,7 +540,7 @@ struct PriorizedPartialPaths {
     randomness_clock: usize,
 }
 //
-type RoundedPriority = usize;
+type Priority = f32;
 //
 impl PriorizedPartialPaths {
     /// Create the collection
@@ -515,14 +549,14 @@ impl PriorizedPartialPaths {
     }
 
     /// Prioritize a certain path wrt others, higher is more important
-    pub fn priorize(path: &PartialPath) -> RoundedPriority {
+    pub fn priorize(path: &PartialPath) -> Priority {
         // Increasing path length weight means that the highest priority is
         // put on seeing paths through the end (which allows discarding
         // them), decreasing means that the highest priority is put on
         // following through the paths that are most promizing in terms of
         // cache cost (which tends to favor a more breadth-first approach as
         // the first curve points are free of cache costs).
-        (0.8 * path.len() as f32 - path.cost_so_far()).round() as _
+        0.7 * path.len() as f32 - path.cost_so_far()
     }
 
     /// Record a new partial path
@@ -577,5 +611,46 @@ impl PriorizedPartialPaths {
 
         // Finally, we return the chosen path
         Some(path)
+    }
+
+    /// Count the number of paths of each length within a vector of path
+    fn count_by_len(paths: &Vec<PartialPath>) -> Vec<usize> {
+        let mut histogram = Vec::new();
+        for path in paths {
+            if histogram.len() < path.len() {
+                histogram.resize(path.len(), 0);
+            }
+            histogram[path.len() - 1] += 1;
+        }
+        histogram
+    }
+
+    /// Merge a result of count_by_len() into another
+    fn merge_counts(src1: Vec<usize>, src2: Vec<usize>) -> Vec<usize> {
+        let (mut target, mut src) = (src1, src2);
+        if target.len() < src.len() {
+            target.extend_from_slice(&src[target.len()..]);
+        }
+        src.truncate(target.len());
+        for (idx, src_count) in src.into_iter().enumerate() {
+            target[idx] += src_count;
+        }
+        target
+    }
+
+    /// Count the total number of paths that are currently stored
+    pub fn paths_by_len(&self) -> Vec<usize> {
+        self.storage
+            .iter()
+            .map(|(_priority, path_vec)| Self::count_by_len(path_vec))
+            .fold(Vec::new(), |src1, src2| Self::merge_counts(src1, src2))
+    }
+
+    /// Count the number of highest-priority paths that are currently stored
+    pub fn high_priority_paths_by_len(&self) -> Vec<usize> {
+        self.storage
+            .last()
+            .map(|(_priority, path_vec)| Self::count_by_len(path_vec))
+            .unwrap_or(Vec::new())
     }
 }
