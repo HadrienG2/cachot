@@ -120,22 +120,38 @@ fn main() {
             locality_tester.test_feed_pair_locality("Hilbert curve", hilbert);
 
             // Tell which iterator got the best results
-            let mut best_cost = locality_tester.announce_best_iterator();
+            let mut cumulative_cost = locality_tester.announce_best_iterator().to_owned();
 
             // Now, let's try to brute-force a better iterator. First, evaluate
             // all possible paths through the iteration domain where we don't
             // step by more than (for now) [1, 1]...
             println!("\nPerforming brute force search for a better path...");
-            for max_radius in 1..num_feeds {
-                println!("- Using next step search radius {}", max_radius);
-                if let Some((cost, _path)) =
-                    brute_force::search_best_path(num_feeds, entry_size, max_radius, best_cost)
-                {
-                    println!("  * Found better paths with cache cost {}", cost);
-                    best_cost = cost;
-                } else {
-                    println!("  * Did not find any better path at that search radius");
+            let mut tolerance = 0.0;
+            while tolerance < *cumulative_cost.last().unwrap() {
+                for max_radius in 1..num_feeds {
+                    println!(
+                        "- Using cumulative cost tolerance {} and next step search radius {}",
+                        tolerance, max_radius
+                    );
+                    if let Some(_path) = brute_force::search_best_path(
+                        num_feeds,
+                        entry_size,
+                        max_radius,
+                        &mut cumulative_cost[..],
+                        tolerance,
+                    ) {
+                        println!(
+                            "  * Found better paths with cumulative cost {:?}",
+                            cumulative_cost
+                        );
+                        if *cumulative_cost.last().unwrap() == 1.0 {
+                            println!("  * We won't be able to do any better, quit here.");
+                        }
+                    } else {
+                        println!("  * Did not find any better path at that search radius");
+                    }
                 }
+                tolerance += 1.0;
             }
 
             debug_level = debug_level.saturating_sub(1);

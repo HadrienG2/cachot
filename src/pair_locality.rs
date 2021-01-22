@@ -10,7 +10,7 @@ use crate::{
 pub struct PairLocalityTester {
     debug_level: usize,
     cache_model: CacheModel,
-    best_iterator: Option<(String, cache::Cost)>,
+    best_iterator: Option<(String, Box<[cache::Cost]>)>,
 }
 //
 impl PairLocalityTester {
@@ -34,6 +34,7 @@ impl PairLocalityTester {
         }
         let mut cache_sim = self.cache_model.start_simulation();
         let mut total_cost = 0.0;
+        let mut cumulative_cost = Vec::new();
         let mut feed_load_count = 0;
         for feed_pair in feed_pair_iterator {
             if self.debug_level >= 2 {
@@ -56,6 +57,7 @@ impl PairLocalityTester {
                 _ => println!("  * Total cache cost of this pair is {}", pair_cost),
             }
             total_cost += pair_cost;
+            cumulative_cost.push(total_cost);
             feed_load_count += 2;
         }
         match self.debug_level {
@@ -74,10 +76,10 @@ impl PairLocalityTester {
         let best_cost = self
             .best_iterator
             .as_ref()
-            .map(|(_name, cost)| *cost)
+            .map(|(_name, cumulative_cost)| *cumulative_cost.last().unwrap())
             .unwrap_or(cache::Cost::MAX);
         if total_cost < best_cost {
-            self.best_iterator = Some((name.to_owned(), total_cost));
+            self.best_iterator = Some((name.to_owned(), cumulative_cost.into()));
         }
     }
 
@@ -86,18 +88,18 @@ impl PairLocalityTester {
     /// If a tie occurs, pick the first iterator, as we're testing designs from
     /// the simplest to the most complex ones.
     ///
-    pub fn announce_best_iterator(&self) -> cache::Cost {
+    pub fn announce_best_iterator(&self) -> &[cache::Cost] {
         if self.debug_level > 0 {
             println!();
         }
-        let (best_name, best_cost) = self
+        let (best_name, cumulative_cost) = self
             .best_iterator
             .as_ref()
             .expect("No iterator has been tested yet");
         println!(
-            "The best iterator so far is \"{}\" with cost {}",
-            best_name, best_cost
+            "The best iterator so far is \"{}\" with cumulative cost at each step {:?}",
+            best_name, cumulative_cost
         );
-        *best_cost
+        &cumulative_cost[..]
     }
 }
