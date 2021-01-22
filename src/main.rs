@@ -24,7 +24,7 @@ type FeedIdx = space_filler::Coordinate;
 /// As a compromise until we get there, we will use an upper bound on the number
 /// of feeds that will be used in tests.
 ///
-pub(crate) const MAX_FEEDS: FeedIdx = 16;
+pub(crate) const MAX_FEEDS: FeedIdx = 8 /* 16 */;
 
 /// Maximum number of feed pairs
 const MAX_PAIRS: usize = MAX_FEEDS as usize * MAX_FEEDS as usize;
@@ -40,8 +40,8 @@ fn main() {
         4,
         // Actual PAON-4 configuration
         8,
-        // What would happen with more feeds?
-        16
+        /* // TODO: What would happen with more feeds?
+        16 */
     ];
     let mut debug_level = 2;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
