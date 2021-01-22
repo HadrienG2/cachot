@@ -248,7 +248,7 @@ struct PartialPath {
     path_len: usize,
     visited_pairs: [usize; MAX_PAIR_WORDS],
     cache_sim: CacheSimulation,
-    cumulative_distance: StepDistance,
+    extra_distance: StepDistance,
 }
 //
 /// Path elements are stored as a linked list to enable sharing of common nodes.
@@ -328,7 +328,7 @@ impl PartialPath {
             path_len: 1,
             visited_pairs,
             cache_sim,
-            cumulative_distance: 0.0,
+            extra_distance: 0.0,
         }
     }
 
@@ -340,9 +340,9 @@ impl PartialPath {
         self.path_len
     }
 
-    /// Tell how much distance was covered across path steps
-    pub fn cumulative_distance(&self) -> StepDistance {
-        self.cumulative_distance
+    /// Tell how much excess distance was covered through path stepping
+    pub fn extra_distance(&self) -> StepDistance {
+        self.extra_distance
     }
 
     /// Get the last path entry
@@ -449,7 +449,7 @@ impl PartialPath {
             path_len: self.path_len + 1,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
-            cumulative_distance: self.cumulative_distance + step_length,
+            extra_distance: self.extra_distance() + (step_length - 1.0),
         }
     }
 }
@@ -492,9 +492,6 @@ struct PriorizedPartialPaths {
 
     /// Mechanism to reuse inner Vec allocations
     storage_morgue: Vec<Vec<PartialPath>>,
-
-    /// Mechanism to periodically trigger path selection randomization
-    randomness_clock: usize,
 }
 //
 type Priority = f32;
@@ -511,12 +508,9 @@ impl PriorizedPartialPaths {
         // * In doing so, however, we must be careful to finish paths as 1/that
         //   frees up memory and 2/that updates our best path model, which in
         //   turns allows us to prune bad paths.
-        // * (1, 0)-style steps should usually be optimal from a cache locality
-        //   point of view, but it's okay to take longer steps if you can avoid
-        //   a cache miss that way.
-        0.8 * path.len() as f32
-            - path.cost_so_far()
-            - (path.cumulative_distance() - (path.len() - 1) as f32).sqrt()
+        // * Let's keep the path as close to (0, 1) steps as possible, given the
+        //   aforementioned constraints.
+        0.99 * path.len() as f32 - path.cost_so_far() - 0.2 * path.extra_distance()
     }
 
     /// Record a new partial path
@@ -548,18 +542,9 @@ impl PriorizedPartialPaths {
         let (_priority, highest_priority_paths) = self.storage.last_mut()?;
         debug_assert!(!highest_priority_paths.is_empty());
 
-        // Normally, we pick the last path in the list, which is most efficient,
-        // but we regularly allow ourselves to pick a random path instead in
-        // order to make sure that the algorithm doesn't get stuck perpetually
-        // exploring the same region of the decision tree.
-        const RANDOM_PICK_RATE: usize = 1 << 5;
-        self.randomness_clock += 1;
-        let path = if self.randomness_clock % RANDOM_PICK_RATE != 0 {
-            highest_priority_paths.pop().unwrap()
-        } else {
-            let path_idx = rng.gen_range(0..highest_priority_paths.len());
-            highest_priority_paths.remove(path_idx)
-        };
+        // Pick a random high-priority path
+        let path_idx = rng.gen_range(0..highest_priority_paths.len());
+        let path = highest_priority_paths.remove(path_idx);
 
         // If the set of highest priority paths is now empty, we remove it, but
         // keep the allocation around for re-use
