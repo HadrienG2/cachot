@@ -508,9 +508,9 @@ impl PriorizedPartialPaths {
         // * In doing so, however, we must be careful to finish paths as 1/that
         //   frees up memory and 2/that updates our best path model, which in
         //   turns allows us to prune bad paths.
-        // * Let's keep the path as close to (0, 1) steps as possible, given the
-        //   aforementioned constraints.
-        0.99 * path.len() as f32 - path.cost_so_far() - 0.2 * path.extra_distance()
+        // * Let's keep the path as close to nice (0, 1) steps as possible,
+        //   given the aforementioned constraints.
+        0.8 * path.len() as f32 - path.cost_so_far() - 0.1 * path.extra_distance()
     }
 
     /// Record a new partial path
