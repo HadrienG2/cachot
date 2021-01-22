@@ -34,19 +34,12 @@ pub type Path = Box<[FeedPair]>;
 pub fn search_best_path(
     num_feeds: FeedIdx,
     entry_size: usize,
-    max_radius: FeedIdx,
     best_cumulative_cost: &mut [cache::Cost],
     tolerance: cache::Cost,
 ) -> Option<Path> {
     // Let's be reasonable here
     let mut total_cost_target = *best_cumulative_cost.last().unwrap() - 1.0;
-    assert!(
-        num_feeds > 1
-            && num_feeds <= MAX_FEEDS
-            && entry_size > 0
-            && max_radius >= 1
-            && total_cost_target >= 0.0
-    );
+    assert!(num_feeds > 1 && num_feeds <= MAX_FEEDS && entry_size > 0 && total_cost_target >= 0.0);
 
     // Set up the cache model
     let cache_model = CacheModel::new(entry_size);
@@ -75,68 +68,6 @@ pub fn search_best_path(
             priorized_partial_paths.push(PartialPath::new(&cache_model, [start_x, start_y]));
         }
     }
-
-    // Precompute the neighbors of every point of the [x, y] domain
-    //
-    // The constraints on them being...
-    //
-    // - Next point should be within max_radius of current [x, y] position
-    // - Next point should remain within the iteration domain (no greater
-    //   than num_feeds, and y >= x).
-    //
-    // For each point, we store...
-    //
-    // - The x coordinate of the first neighbor
-    // - For this x coordinate and all subsequent ones, the range of y
-    //   coordinates of all neighbors that have this x coordinate.
-    //
-    // This should achieve the indended goal of moving the neighbor constraint
-    // logic out of the hot loop, without generating too much memory traffic
-    // associated with reading out neighbor coordinates, nor hiding valuable
-    // information about the next_x/next_y iteration pattern from the compiler.
-    //
-    // We also provide a convenient iteration function that produces the
-    // iterator of neighbors associated with a certain point from this storage.
-    //
-    let mut neighbors = vec![(0, vec![]); num_feeds as usize * num_feeds as usize];
-    let linear_idx =
-        |&[curr_x, curr_y]: &FeedPair| curr_y as usize * num_feeds as usize + curr_x as usize;
-    for curr_x in 0..num_feeds {
-        for curr_y in curr_x..num_feeds {
-            let next_x_range =
-                curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds);
-            debug_assert!(next_x_range.end <= num_feeds);
-            debug_assert!((curr_x as isize - next_x_range.start as isize) <= max_radius as isize);
-            debug_assert!((next_x_range.end as isize - curr_x as isize) <= max_radius as isize + 1);
-
-            let (first_next_x, next_y_ranges) = &mut neighbors[linear_idx(&[curr_x, curr_y])];
-            *first_next_x = next_x_range.start;
-
-            for next_x in next_x_range {
-                let next_y_range = curr_y.saturating_sub(max_radius).max(next_x)
-                    ..(curr_y + max_radius + 1).min(num_feeds);
-                debug_assert!(next_y_range.end <= num_feeds);
-                debug_assert!(
-                    (curr_y as isize - next_y_range.start as isize) <= max_radius as isize
-                );
-                debug_assert!(
-                    (next_y_range.end as isize - curr_y as isize) <= max_radius as isize + 1
-                );
-                debug_assert!(next_y_range.start >= next_x);
-
-                next_y_ranges.push(next_y_range);
-            }
-        }
-    }
-    let neighborhood = |&[curr_x, curr_y]: &FeedPair| {
-        debug_assert!(curr_y >= curr_x);
-        let (first_next_x, ref next_y_ranges) = &neighbors[linear_idx(&[curr_x, curr_y])];
-        next_y_ranges.into_iter().cloned().enumerate().flat_map(
-            move |(next_x_offset, next_y_range)| {
-                next_y_range.map(move |next_y| [first_next_x + next_x_offset as u8, next_y])
-            },
-        )
-    };
 
     // Next we iterate as long as we have incomplete paths by taking the most
     // promising path so far, considering all the next steps that can be taken
@@ -175,113 +106,118 @@ pub fn search_best_path(
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
-        for next_step in neighborhood(partial_path.last_step()) {
-            // Log which neighbor we're looking at in verbose mode
-            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                println!("      * Trying {:?}...", next_step);
-            }
+        for next_x in 0..num_feeds {
+            for next_y in next_x..num_feeds {
+                let next_step = [next_x, next_y];
 
-            // Display progress
-            if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
-                println!("  * Processed {}M path steps", path_counter / 1_000_000,);
+                // Log which neighbor we're looking at in verbose mode
+                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                    println!("      * Trying {:?}...", next_step);
+                }
 
-                let paths_by_len = priorized_partial_paths.paths_by_len();
-                let display_path_counts = |header, paths_by_len: &Vec<usize>| {
-                    print!("    - {:<25}: ", header);
-                    for partial_length in 1..path_length {
-                        print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                // Display progress
+                if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
+                    println!("  * Processed {}M path steps", path_counter / 1_000_000,);
+
+                    let paths_by_len = priorized_partial_paths.paths_by_len();
+                    let display_path_counts = |header, paths_by_len: &Vec<usize>| {
+                        print!("    - {:<25}: ", header);
+                        for partial_length in 1..path_length {
+                            print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                        }
+                        println!();
+                    };
+                    display_path_counts("Partial paths by length", &paths_by_len);
+                    display_path_counts(
+                        "Priorized paths by length",
+                        &priorized_partial_paths.high_priority_paths_by_len(),
+                    );
+
+                    let mut max_next_steps = 1.0f64;
+                    let mut max_total_steps = 0.0f64;
+                    for partial_length in (1..path_length).rev() {
+                        max_next_steps *= (path_length - partial_length) as f64;
+                        max_total_steps +=
+                            paths_by_len.get(partial_length - 1).copied().unwrap_or(0) as f64
+                                * max_next_steps;
                     }
-                    println!();
-                };
-                display_path_counts("Partial paths by length", &paths_by_len);
-                display_path_counts(
-                    "Priorized paths by length",
-                    &priorized_partial_paths.high_priority_paths_by_len(),
-                );
-
-                let mut max_next_steps = 1.0f64;
-                let mut max_total_steps = 0.0f64;
-                for partial_length in (1..path_length).rev() {
-                    max_next_steps *= (path_length - partial_length) as f64;
-                    max_total_steps += paths_by_len.get(partial_length - 1).copied().unwrap_or(0)
-                        as f64
-                        * max_next_steps;
-                }
-                println!(
-                    "    - Exhaustive search space  : 10^{} paths",
-                    max_total_steps.log10()
-                );
-            }
-            path_counter += 1;
-
-            // Have we been there before ?
-            if partial_path.contains(&next_step) {
-                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                    println!("      * That's going circles, forget it.");
-                }
-                continue;
-            }
-
-            // Does it seem worthwhile to try to go there?
-            let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
-            let next_cost = next_step_eval.next_cost;
-            let best_next_cost = best_cumulative_cost[partial_path.len()];
-            if next_cost > (best_next_cost + tolerance).min(total_cost_target) {
-                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!(
+                        "    - Exhaustive search space  : 10^{} paths",
+                        max_total_steps.log10()
+                    );
+                }
+                path_counter += 1;
+
+                // Have we been there before ?
+                if partial_path.contains(&next_step) {
+                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                        println!("      * That's going circles, forget it.");
+                    }
+                    continue;
+                }
+
+                // Does it seem worthwhile to try to go there?
+                let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
+                let next_cost = next_step_eval.next_cost;
+                let best_next_cost = best_cumulative_cost[partial_path.len()];
+                if next_cost > (best_next_cost + tolerance).min(total_cost_target) {
+                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                        println!(
                         "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
                         partial_path.len() + 1,
                         path_length
                     );
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            // Are we finished ?
-            if partial_path.len() + 1 == path_length {
-                // Is this path better than what was observed before?
-                if next_cost <= total_cost_target {
-                    // If so, materialize the path into a vector
-                    let mut final_path = vec![FeedPair::default(); path_length].into_boxed_slice();
-                    final_path[path_length - 1] = next_step_eval.next_step;
-                    best_cumulative_cost[path_length - 1] = next_step_eval.next_cost;
-                    for (i, (step, cost)) in
-                        (0..partial_path.len()).rev().zip(partial_path.iter_rev())
-                    {
-                        final_path[i] = step;
-                        best_cumulative_cost[i] = cost;
-                    }
+                // Are we finished ?
+                if partial_path.len() + 1 == path_length {
+                    // Is this path better than what was observed before?
+                    if next_cost <= total_cost_target {
+                        // If so, materialize the path into a vector
+                        let mut final_path =
+                            vec![FeedPair::default(); path_length].into_boxed_slice();
+                        final_path[path_length - 1] = next_step_eval.next_step;
+                        best_cumulative_cost[path_length - 1] = next_step_eval.next_cost;
+                        for (i, (step, cost)) in
+                            (0..partial_path.len()).rev().zip(partial_path.iter_rev())
+                        {
+                            final_path[i] = step;
+                            best_cumulative_cost[i] = cost;
+                        }
 
-                    // Announce victory
-                    if BRUTE_FORCE_DEBUG_LEVEL == 1 {
-                        println!(
-                            "  * Reached new total cache cost record {} with path {:?}",
-                            next_cost, final_path
-                        );
-                    }
-                    if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
-                        let path_cost = final_path
-                            .iter()
-                            .zip(best_cumulative_cost.iter())
-                            .collect::<Box<[_]>>();
-                        println!(
+                        // Announce victory
+                        if BRUTE_FORCE_DEBUG_LEVEL == 1 {
+                            println!(
+                                "  * Reached new total cache cost record {} with path {:?}",
+                                next_cost, final_path
+                            );
+                        }
+                        if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
+                            let path_cost = final_path
+                                .iter()
+                                .zip(best_cumulative_cost.iter())
+                                .collect::<Box<[_]>>();
+                            println!(
                             "  * Reached new total cache cost record {} with path and cumulative cost {:?}",
                             next_cost, path_cost
                         );
+                        }
+
+                        // Now record that path and look for a better one
+                        best_path = Some(final_path);
+                        total_cost_target = next_cost - 1.0;
                     }
-
-                    // Now record that path and look for a better one
-                    best_path = Some(final_path);
-                    total_cost_target = next_cost - 1.0;
+                    continue;
                 }
-                continue;
-            }
 
-            // Otherwise, schedule searching further down this path
-            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                println!("      * That seems reasonable, we'll explore that path further...");
+                // Otherwise, schedule searching further down this path
+                if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                    println!("      * That seems reasonable, we'll explore that path further...");
+                }
+                priorized_partial_paths.push(partial_path.commit_next_step(next_step_eval));
             }
-            priorized_partial_paths.push(partial_path.commit_next_step(next_step_eval));
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
@@ -404,13 +340,9 @@ impl PartialPath {
         self.path_len
     }
 
-    /// Tell what was the average size of every path step
-    pub fn average_step(&self) -> StepDistance {
-        if self.path_len == 1 {
-            1.0
-        } else {
-            self.cumulative_distance / (self.path_len - 1) as StepDistance
-        }
+    /// Tell how much distance was covered across path steps
+    pub fn cumulative_distance(&self) -> StepDistance {
+        self.cumulative_distance
     }
 
     /// Get the last path entry
@@ -575,10 +507,16 @@ impl PriorizedPartialPaths {
 
     /// Prioritize a certain path wrt others, higher is more important
     pub fn priorize(path: &PartialPath) -> Priority {
-        // It's equally important to move forward and to avoid cache misses,
-        // avoid complicated steps but it's okay to do a (1, 1) step if you can
-        // avoid a cache miss that way.
-        0.9 * path.len() as f32 - path.cost_so_far() - 2.0 * (path.average_step() - 1.0)
+        // * The main goal is to avoid cache misses
+        // * In doing so, however, we must be careful to finish paths as 1/that
+        //   frees up memory and 2/that updates our best path model, which in
+        //   turns allows us to prune bad paths.
+        // * (1, 0)-style steps should usually be optimal from a cache locality
+        //   point of view, but it's okay to take longer steps if you can avoid
+        //   a cache miss that way.
+        0.8 * path.len() as f32
+            - path.cost_so_far()
+            - (path.cumulative_distance() - (path.len() - 1) as f32).sqrt()
     }
 
     /// Record a new partial path

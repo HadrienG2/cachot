@@ -132,7 +132,6 @@ fn main() {
                 if let Some(_path) = brute_force::search_best_path(
                     num_feeds,
                     entry_size,
-                    num_feeds - 1,
                     &mut cumulative_cost[..],
                     tolerance,
                 ) {
