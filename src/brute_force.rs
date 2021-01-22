@@ -6,7 +6,7 @@ use crate::{
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
 use rand::prelude::*;
-use std::{collections::BTreeMap, fmt::Write, rc::Rc};
+use std::{fmt::Write, rc::Rc};
 
 /// Configure the level of debugging features from brute force path search.
 ///
@@ -218,7 +218,7 @@ pub fn search_best_path(
             //       want the best of the best curves.
             //
             //       (note: for pairwise iteration that fits in L2 cache, a
-            //       tolerance of 2 is an infinite tolerance).
+            //       tolerance of 2 per step is an infinite tolerance).
             //
             //       This requires a way to propagate the "best cost at every
             //       step" to the caller, instead of just the the best cost at
@@ -297,7 +297,7 @@ const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
 /// Path which we are in the process of exploring
 struct PartialPath {
-    // TODO: Replace Rc with something that allows us to reuse the allocations
+    // TODO: Consider replacing Rc with something that allows allocation reuse
     path: Rc<PathElems>,
     path_len: usize,
     visited_pairs: [usize; MAX_PAIR_WORDS],
@@ -529,13 +529,17 @@ struct NextStepEvaluation {
 ///
 #[derive(Default)]
 struct PriorizedPartialPaths {
-    // Main data structure
-    storage: BTreeMap<RoundedPriority, Vec<PartialPath>>,
+    /// Sorted list of prioritized ongoing paths
+    ///
+    /// I tried using a BTreeMap before, but since we're always popping the last
+    /// element and inserting close to the end, a sorted list is better.
+    ///
+    storage: Vec<(RoundedPriority, Vec<PartialPath>)>,
 
-    // Mechanism to reuse inner Vec allocations
+    /// Mechanism to reuse inner Vec allocations
     storage_morgue: Vec<Vec<PartialPath>>,
 
-    // Mechanism to periodically trigger path selection randomization
+    /// Mechanism to periodically trigger path selection randomization
     randomness_clock: usize,
 }
 //
@@ -561,32 +565,30 @@ impl PriorizedPartialPaths {
     /// Record a new partial path
     #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
+        let priority = Self::priorize(&path);
         let storage_morgue = &mut self.storage_morgue;
-        let same_priority_paths = self
-            .storage
-            .entry(Self::priorize(&path))
-            .or_insert_with(|| {
-                if let Some(unused_vec) = storage_morgue.pop() {
-                    unused_vec
-                } else {
-                    Vec::new()
-                }
-            });
-        same_priority_paths.push(path);
+        let mut make_new_path_list = |path| {
+            let mut new_paths = storage_morgue.pop().unwrap_or_default();
+            new_paths.push(path);
+            (priority, new_paths)
+        };
+        for (idx, (curr_priority, curr_paths)) in self.storage.iter_mut().enumerate().rev() {
+            if *curr_priority == priority {
+                curr_paths.push(path);
+                return;
+            } else if *curr_priority < priority {
+                self.storage.insert(idx + 1, make_new_path_list(path));
+                return;
+            }
+        }
+        self.storage.insert(0, make_new_path_list(path));
     }
 
     /// Extract one of the highest-priority paths
     #[inline(always)]
     pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
         // Find the set of highest priority paths
-        // TODO: Use last_entry once it is stable
-        use std::collections::btree_map::Entry;
-        let highest_priority = *self.storage.keys().rev().next()?;
-        let mut highest_priority_entry = match self.storage.entry(highest_priority) {
-            Entry::Vacant(_) => unreachable!(),
-            Entry::Occupied(entry) => entry,
-        };
-        let highest_priority_paths = highest_priority_entry.get_mut();
+        let (_priority, highest_priority_paths) = self.storage.last_mut()?;
         debug_assert!(!highest_priority_paths.is_empty());
 
         // Normally, we pick the last path in the list, which is most efficient,
@@ -605,7 +607,7 @@ impl PriorizedPartialPaths {
         // If the set of highest priority paths is now empty, we remove it, but
         // keep the allocation around for re-use
         if highest_priority_paths.is_empty() {
-            let mut highest_priority_paths = highest_priority_entry.remove();
+            let (_priority, mut highest_priority_paths) = self.storage.pop().unwrap();
             highest_priority_paths.clear();
             self.storage_morgue.push(highest_priority_paths);
         }
