@@ -575,7 +575,10 @@ impl PriorizedPartialPaths {
 
     /// Prioritize a certain path wrt others, higher is more important
     pub fn priorize(path: &PartialPath) -> Priority {
-        path.len() as f32 - path.cost_so_far() - 6.0 * (path.average_step() - 1.0)
+        // It's equally important to move forward and to avoid cache misses,
+        // avoid complicated steps but it's okay to do a (1, 1) step if you can
+        // avoid a cache miss that way.
+        path.len() as f32 - path.cost_so_far() - 2.0 * (path.average_step() - 1.0)
     }
 
     /// Record a new partial path
