@@ -538,13 +538,19 @@ impl PriorizedPartialPaths {
     /// Record a new partial path
     #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
+        // Priorize the input path
         let priority = Self::priorize(&path);
+
+        // If that priority is new to us, we'll need to make a new list for it,
+        // reusing allocations from past lists if we have some spare ones
         let storage_morgue = &mut self.storage_morgue;
         let mut make_new_path_list = |path| {
             let mut new_paths = storage_morgue.pop_front().unwrap_or_default();
             new_paths.push(path);
             (priority, new_paths)
         };
+
+        // Inject the priorized paths into our internal storage
         for (idx, (curr_priority, curr_paths)) in self.storage.iter_mut().enumerate().rev() {
             if *curr_priority == priority {
                 curr_paths.push(path);
@@ -566,12 +572,12 @@ impl PriorizedPartialPaths {
 
         // If there are multiple paths th choose from...
         let path = if highest_priority_paths.len() != 1 {
-            // Periodically pick a random high-priority path in order to reduce
-            // the odd of the algorithm getting stuck in a bad region of the
-            // search space due to an overly regular search pattern.
-            // But don't do it too often as it gets expensive, especially when
-            // there are lots of high-priority path. Instead, usually favor
-            // picking the most accessible high-priority path at the end.
+            // ...periodically pick a random high-priority path in order to
+            // reduce the odd of the algorithm getting stuck in a bad region of
+            // the search space as a result of following an overly regular
+            // search pattern. But don't do it too often as it gets expensive,
+            // especially when there are lots of high-priority path. Instead,
+            // favor picking the most accessible high-priority path at the end.
             const RNG_AVERSION: f32 = 0.1;
             let rng_threshold = (highest_priority_paths.len() as f32) * RNG_AVERSION;
             if self.iters_since_last_rng as f32 > rng_threshold {
@@ -587,8 +593,8 @@ impl PriorizedPartialPaths {
             highest_priority_paths.pop().unwrap()
         };
 
-        // If the set of highest priority paths is now empty, we remove it, but
-        // keep some allocations around for re-use
+        // If the set of highest priority paths is now empty, we remove it from
+        // the set of priorized paths, but keep some allocations around.
         if highest_priority_paths.is_empty() {
             let (_priority, mut highest_priority_paths) = self.storage.pop().unwrap();
             highest_priority_paths.clear();
@@ -614,7 +620,7 @@ impl PriorizedPartialPaths {
         histogram
     }
 
-    /// Merge a result of count_by_len() into another
+    /// Merge a result of count_by_len() with another
     fn merge_counts(src1: Vec<usize>, src2: Vec<usize>) -> Vec<usize> {
         let (mut target, mut src) = (src1, src2);
         if target.len() < src.len() {
@@ -627,7 +633,7 @@ impl PriorizedPartialPaths {
         target
     }
 
-    /// Count the total number of paths that are currently stored
+    /// Count the total number of paths of each length that are currently stored
     pub fn paths_by_len(&self) -> Vec<usize> {
         self.storage
             .iter()
@@ -635,7 +641,7 @@ impl PriorizedPartialPaths {
             .fold(Vec::new(), |src1, src2| Self::merge_counts(src1, src2))
     }
 
-    /// Count the number of highest-priority paths that are currently stored
+    /// Like paths_by_len, but only counts the number of high-priority paths
     pub fn high_priority_paths_by_len(&self) -> Vec<usize> {
         self.storage
             .last()
