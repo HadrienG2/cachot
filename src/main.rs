@@ -140,7 +140,7 @@ fn main() {
                         max_radius,
                         &mut cumulative_cost[..],
                         tolerance,
-                        Duration::from_millis(15_010),
+                        Duration::from_millis(60_010),
                     ) {
                         println!(
                             "  * Found better paths with cumulative cost {:?}",

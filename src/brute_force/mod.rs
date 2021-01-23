@@ -306,7 +306,7 @@ impl ProgressMonitor {
 
             // Check if we covered a significant fraction of the search space
             // that we last observed.
-            const SIGNIFICANT_PROGRESS_THRESHOLD: f64 = 0.05;
+            const SIGNIFICANT_PROGRESS_THRESHOLD: f64 = 0.01;
             let last_processed_steps = self.last_exhaustive_steps - remaining_exhaustive_steps;
             let rel_processed_steps = last_processed_steps / self.last_exhaustive_steps;
             if rel_processed_steps > SIGNIFICANT_PROGRESS_THRESHOLD {
