@@ -16,7 +16,7 @@
 //! we are in the process of exploring in a data structure which allows
 //! priorizing the most promising tracks over others.
 
-use crate::brute_force::PartialPath;
+use super::PartialPath;
 use rand::prelude::*;
 use std::collections::VecDeque;
 
