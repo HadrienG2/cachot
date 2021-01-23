@@ -137,6 +137,14 @@ pub fn search_best_path(
                     println!("      * Trying {:?}...", next_step);
                 }
 
+                // Check if we've been on that neighbor before
+                if partial_path.contains(&next_step) {
+                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+                        println!("      * That's going circles, forget it.");
+                    }
+                    continue;
+                }
+
                 // Monitor progress
                 if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
                     println!("  * Processed {}M path steps", path_counter / 1_000_000,);
@@ -169,14 +177,6 @@ pub fn search_best_path(
                     );
                 }
                 path_counter += 1;
-
-                // Have we been there before ?
-                if partial_path.contains(&next_step) {
-                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                        println!("      * That's going circles, forget it.");
-                    }
-                    continue;
-                }
 
                 // Does it seem worthwhile to try to go there?
                 let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
