@@ -132,7 +132,7 @@ pub fn search_best_path(
                     println!("      * Trying {:?}...", next_step);
                 }
 
-                // Display progress
+                // Monitor progress
                 if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
                     println!("  * Processed {}M path steps", path_counter / 1_000_000,);
 
@@ -511,6 +511,9 @@ struct PriorizedPartialPaths {
 
     /// Mechanism to reuse inner Vec allocations
     storage_morgue: Vec<Vec<PartialPath>>,
+
+    /// Mechanism to periodically leave path selection to chance
+    iters_since_last_rng: usize,
 }
 //
 type Priority = f32;
@@ -529,7 +532,7 @@ impl PriorizedPartialPaths {
         //   turns allows us to prune bad paths.
         // * Let's keep the path as close to nice (0, 1) steps as possible,
         //   given the aforementioned constraints.
-        0.9 * path.len() as f32 - path.cost_so_far() - 0.2 * path.extra_distance()
+        -path.cost_so_far() + 0.95 * path.len() as f32 - 0.35 * path.extra_distance()
     }
 
     /// Record a new partial path
@@ -561,16 +564,38 @@ impl PriorizedPartialPaths {
         let (_priority, highest_priority_paths) = self.storage.last_mut()?;
         debug_assert!(!highest_priority_paths.is_empty());
 
-        // Pick a random high-priority path
-        let path_idx = rng.gen_range(0..highest_priority_paths.len());
-        let path = highest_priority_paths.remove(path_idx);
+        // If there are multiple paths th choose from...
+        let path = if highest_priority_paths.len() != 1 {
+            // Periodically pick a random high-priority path in order to reduce
+            // the odd of the algorithm getting stuck in a bad region of the
+            // search space due to an overly regular search pattern.
+            // But don't do it too often as it gets expensive, especially when
+            // there are lots of high-priority path. Instead, usually favor
+            // picking the most accessible high-priority path at the end.
+            const RNG_AVERSION: f32 = 0.1;
+            let rng_threshold = (highest_priority_paths.len() as f32) * RNG_AVERSION;
+            if self.iters_since_last_rng as f32 > rng_threshold {
+                self.iters_since_last_rng = 0;
+                let path_idx = rng.gen_range(0..highest_priority_paths.len());
+                highest_priority_paths.remove(path_idx)
+            } else {
+                self.iters_since_last_rng += 1;
+                highest_priority_paths.pop().unwrap()
+            }
+        } else {
+            // If there's only one path, we must take that one
+            highest_priority_paths.pop().unwrap()
+        };
 
         // If the set of highest priority paths is now empty, we remove it, but
         // keep the allocation around for re-use
         if highest_priority_paths.is_empty() {
             let (_priority, mut highest_priority_paths) = self.storage.pop().unwrap();
             highest_priority_paths.clear();
-            self.storage_morgue.push(highest_priority_paths);
+            const MAX_MORGUE_SIZE: usize = 1 << 5;
+            if self.storage_morgue.len() < MAX_MORGUE_SIZE {
+                self.storage_morgue.push(highest_priority_paths);
+            }
         }
 
         // Finally, we return the chosen path
