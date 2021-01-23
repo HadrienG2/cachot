@@ -128,22 +128,28 @@ fn main() {
             println!("\nPerforming brute force search for a better path...");
             let mut tolerance = 0.0;
             while tolerance < *cumulative_cost.last().unwrap() {
-                println!("- Using cumulative cost tolerance {}", tolerance);
-                if let Some(_path) = brute_force::search_best_path(
-                    num_feeds,
-                    entry_size,
-                    &mut cumulative_cost[..],
-                    tolerance,
-                ) {
+                for max_radius in 1..num_feeds {
                     println!(
-                        "  * Found better paths with cumulative cost {:?}",
-                        cumulative_cost
+                        "- Using cumulative cost tolerance {} and search radius {}",
+                        tolerance, max_radius
                     );
-                    if *cumulative_cost.last().unwrap() == 1.0 {
-                        println!("  * We won't be able to do any better, quit here.");
+                    if let Some(_path) = brute_force::search_best_path(
+                        num_feeds,
+                        entry_size,
+                        max_radius,
+                        &mut cumulative_cost[..],
+                        tolerance,
+                    ) {
+                        println!(
+                            "  * Found better paths with cumulative cost {:?}",
+                            cumulative_cost
+                        );
+                        if *cumulative_cost.last().unwrap() == 1.0 {
+                            println!("  * We won't be able to do any better, quit here.");
+                        }
+                    } else {
+                        println!("  * Did not find any better path at that tolerance");
                     }
-                } else {
-                    println!("  * Did not find any better path at that tolerance");
                 }
                 tolerance += 1.0;
             }

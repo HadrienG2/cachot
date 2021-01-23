@@ -34,12 +34,19 @@ pub type Path = Box<[FeedPair]>;
 pub fn search_best_path(
     num_feeds: FeedIdx,
     entry_size: usize,
+    max_radius: FeedIdx,
     best_cumulative_cost: &mut [cache::Cost],
     tolerance: cache::Cost,
 ) -> Option<Path> {
     // Let's be reasonable here
     let mut total_cost_target = *best_cumulative_cost.last().unwrap() - 1.0;
-    assert!(num_feeds > 1 && num_feeds <= MAX_FEEDS && entry_size > 0 && total_cost_target >= 0.0);
+    assert!(
+        num_feeds > 1
+            && num_feeds <= MAX_FEEDS
+            && max_radius > 0
+            && entry_size > 0
+            && total_cost_target >= 0.0
+    );
 
     // Set up the cache model
     let cache_model = CacheModel::new(entry_size);
@@ -109,6 +116,16 @@ pub fn search_best_path(
         for next_x in 0..num_feeds {
             for next_y in next_x..num_feeds {
                 let next_step = [next_x, next_y];
+
+                // Trim candidates according to the max_radius criterion
+                let &[curr_x, curr_y] = partial_path.last_step();
+                let radius = (next_x as isize - curr_x as isize)
+                    .abs()
+                    .max((next_y as isize - curr_y as isize).abs())
+                    as FeedIdx;
+                if radius > max_radius {
+                    continue;
+                }
 
                 // Log which neighbor we're looking at in verbose mode
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
@@ -512,7 +529,7 @@ impl PriorizedPartialPaths {
         //   turns allows us to prune bad paths.
         // * Let's keep the path as close to nice (0, 1) steps as possible,
         //   given the aforementioned constraints.
-        0.8 * path.len() as f32 - path.cost_so_far() - 0.1 * path.extra_distance()
+        0.9 * path.len() as f32 - path.cost_so_far() - 0.2 * path.extra_distance()
     }
 
     /// Record a new partial path
