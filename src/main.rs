@@ -134,17 +134,18 @@ fn main() {
                         "- Using cumulative cost tolerance {} and search radius {}",
                         tolerance, max_radius
                     );
-                    if let Some(_path) = brute_force::search_best_path(
+                    if let Some(path) = brute_force::search_best_path(
                         num_feeds,
                         entry_size,
                         max_radius,
                         &mut cumulative_cost[..],
                         tolerance,
-                        Duration::from_millis(60_010),
+                        Duration::from_secs(60),
                     ) {
                         println!(
-                            "  * Found better paths with cumulative cost {:?}",
-                            cumulative_cost
+                            "  * Found better path {:?} with total cost {}",
+                            path,
+                            cumulative_cost.last().unwrap(),
                         );
                         if *cumulative_cost.last().unwrap() == 1.0 {
                             println!("  * We won't be able to do any better, quit here.");
