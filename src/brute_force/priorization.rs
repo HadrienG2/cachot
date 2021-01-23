@@ -30,6 +30,9 @@ pub struct PriorizedPartialPaths {
     ///
     storage: Vec<(Priority, Vec<PartialPath>)>,
 
+    /// Fast access to the number of paths in storage
+    num_paths: usize,
+
     /// Mechanism to reuse inner Vec allocations
     storage_morgue: VecDeque<Vec<PartialPath>>,
 
@@ -46,21 +49,23 @@ impl PriorizedPartialPaths {
     }
 
     /// Prioritize a certain path wrt others, higher is more important
-    pub fn priorize(path: &PartialPath) -> Priority {
+    pub fn priorize(&self, path: &PartialPath) -> Priority {
         // * The main goal is to avoid cache misses
         // * In doing so, however, we must be careful to finish paths as 1/that
-        //   frees up memory and 2/that updates our best path model, which in
-        //   turns allows us to prune bad paths.
+        //   keeps our RAM usage bounded and 2/that updates our best path model,
+        //   which in turns allows us to prune bad paths.
         // * Let's keep the path as close to nice (0, 1) steps as possible,
         //   given the aforementioned constraints.
-        -path.cost_so_far() + 0.95 * path.len() as f32 - 0.1 * path.extra_distance()
+        -path.cost_so_far() + (self.num_paths as f32 * 1e-3 * path.len() as f32)
+            - path.extra_distance()
     }
 
     /// Record a new partial path
     #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
         // Priorize the input path
-        let priority = Self::priorize(&path);
+        self.num_paths += 1;
+        let priority = self.priorize(&path);
 
         // If that priority is new to us, we'll need to make a new list for it,
         // reusing allocations from past lists if we have some spare ones
@@ -126,6 +131,7 @@ impl PriorizedPartialPaths {
         }
 
         // Finally, we return the chosen path
+        self.num_paths -= 1;
         Some(path)
     }
 
