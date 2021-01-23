@@ -63,9 +63,10 @@ impl PriorizedPartialPaths {
     /// Record a new partial path
     #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
-        // Priorize the input path
+        // Count the input path, priorize it, and round the priority so that we
+        // tend to have a small number of priority classes.
         self.num_paths += 1;
-        let priority = self.priorize(&path);
+        let priority = (self.priorize(&path) * 2.0).round() * 0.5;
 
         // If that priority is new to us, we'll need to make a new list for it,
         // reusing allocations from past lists if we have some spare ones
