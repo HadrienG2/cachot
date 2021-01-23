@@ -2,7 +2,7 @@
 //! iteration schemes designed for square lattices, via brute force search.
 
 use crate::{
-    cache::{self, CacheModel, CacheSimulation},
+    cache::{self, CacheModel, CacheSimulation, L1_MISS_COST, NEW_ENTRY_COST},
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
 use rand::prelude::*;
@@ -188,10 +188,12 @@ pub fn search_best_path(
                         }
 
                         // Announce victory
+                        let new_entries_cost =
+                            num_feeds as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
                         if BRUTE_FORCE_DEBUG_LEVEL == 1 {
                             println!(
-                                "  * Reached new total cache cost record {} with path {:?}",
-                                next_cost, final_path
+                                "  * Reached new total cache cost record {} ({} w/o new entries) with path {:?}",
+                                next_cost, next_cost - new_entries_cost, final_path
                             );
                         }
                         if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
@@ -200,8 +202,8 @@ pub fn search_best_path(
                                 .zip(best_cumulative_cost.iter())
                                 .collect::<Box<[_]>>();
                             println!(
-                            "  * Reached new total cache cost record {} with path and cumulative cost {:?}",
-                            next_cost, path_cost
+                            "  * Reached new total cache cost record {} ({} w/o new entries) with path and cumulative cost {:?}",
+                            next_cost, next_cost - new_entries_cost, path_cost
                         );
                         }
 
@@ -301,14 +303,14 @@ impl PartialPath {
     //
     pub fn new(cache_model: &CacheModel, start: FeedPair) -> Self {
         let mut cache_sim = cache_model.start_simulation();
+        let mut curr_cost = 0.0;
         for &feed in start.iter() {
-            let access_cost = cache_sim.simulate_access(&cache_model, feed);
-            debug_assert_eq!(access_cost, 0.0);
+            curr_cost += cache_sim.simulate_access(&cache_model, feed);
         }
 
         let path = Rc::new(PathElems {
             curr_step: start,
-            curr_cost: 0.0,
+            curr_cost,
             prev_steps: None,
         });
 

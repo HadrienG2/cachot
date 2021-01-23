@@ -1,7 +1,7 @@
 //! Mechanism for testing the cache locality of pair iterators
 
 use crate::{
-    cache::{self, CacheModel},
+    cache::{self, CacheModel, L1_MISS_COST, NEW_ENTRY_COST},
     FeedIdx,
 };
 
@@ -34,6 +34,7 @@ impl PairLocalityTester {
         }
         let mut cache_sim = self.cache_model.start_simulation();
         let mut total_cost = 0.0;
+        let mut new_entries_cost = 0.0;
         let mut cumulative_cost = Vec::new();
         let mut feed_load_count = 0;
         for feed_pair in feed_pair_iterator {
@@ -41,36 +42,56 @@ impl PairLocalityTester {
                 println!("- Accessing feed pair {:?}...", feed_pair)
             }
             let mut pair_cost = 0.0;
+            let mut pair_entries_cost = 0.0;
             for feed in feed_pair.iter().copied() {
+                let prev_accessed_entries = cache_sim.num_accessed_entries();
                 let feed_cost = cache_sim.simulate_access(&self.cache_model, feed);
+                let is_new_entry = cache_sim.num_accessed_entries() != prev_accessed_entries;
+                let new_entry_str = if is_new_entry { " (new entry)" } else { "" };
                 if self.debug_level >= 2 {
-                    println!("  * Accessed feed {} for cache cost {}", feed, feed_cost)
+                    println!(
+                        "  * Accessed feed {} for cache cost {}{}",
+                        feed, feed_cost, new_entry_str
+                    )
                 }
                 pair_cost += feed_cost;
+                pair_entries_cost +=
+                    is_new_entry as u8 as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
             }
+            let new_entries_str = if pair_entries_cost != 0.0 {
+                format!(" ({} from new entries)", pair_entries_cost)
+            } else {
+                String::new()
+            };
             match self.debug_level {
                 0 => {}
                 1 => println!(
-                    "- Accessed feed pair {:?} for cache cost {}",
-                    feed_pair, pair_cost
+                    "- Accessed feed pair {:?} for cache cost {}{}",
+                    feed_pair, pair_cost, new_entries_str
                 ),
-                _ => println!("  * Total cache cost of this pair is {}", pair_cost),
+                _ => println!(
+                    "  * Total cache cost of this pair is {}{}",
+                    pair_cost, new_entries_str
+                ),
             }
             total_cost += pair_cost;
+            new_entries_cost += pair_entries_cost;
             cumulative_cost.push(total_cost);
             feed_load_count += 2;
         }
         match self.debug_level {
             0 => println!(
-                "Total cache cost of iterator \"{}\" is {} ({:.2} per feed load)",
+                "Total cache cost of iterator \"{}\" is {} ({} w/o new entries, {:.2} per feed load)",
                 name,
                 total_cost,
-                total_cost / (feed_load_count as cache::Cost)
+                total_cost - new_entries_cost,
+                (total_cost - new_entries_cost) / (feed_load_count as cache::Cost)
             ),
             _ => println!(
-                "- Total cache cost of this iterator is {} ({:.2} per feed load)",
+                "- Total cache cost of this iterator is {} ({} w/o new entries, {:.2} per feed load)",
                 total_cost,
-                total_cost / (feed_load_count as cache::Cost)
+                total_cost - new_entries_cost,
+                (total_cost - new_entries_cost) / (feed_load_count as cache::Cost)
             ),
         }
         let best_cost = self

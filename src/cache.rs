@@ -21,6 +21,20 @@ pub const L2_MISS_COST: Cost = 10.0;
 pub const L3_CAPACITY: usize = 32 * 1024 * 1024;
 pub const L3_MISS_COST: Cost = 60.0;
 
+/// Cost of accessing a cache entry that was never accessed before
+///
+/// This is somewhat artificial (we don't really know what the cost will be, it
+/// depends on previous program execution), but adding a small cost here helps
+/// hinting optimal path search algorithms towards making the most of previously
+/// loaded cache entries before loading new ones.
+///
+/// The current cost is tuned such that the algorithm is wary of introducing a
+/// new cache entry, but not to the point of not doing so when it can avoid one
+/// cache miss. With a prefactor of 0.25, the algorithm would instead need to be
+/// able to avoid two cache misses before it resorts to this possibility.
+///
+pub const NEW_ENTRY_COST: Cost = 0.75 * L1_MISS_COST;
+
 /// CPU cache model, used for evaluating locality merits of 2D iteration schemes
 #[derive(Debug)]
 pub struct CacheModel {
@@ -55,15 +69,19 @@ impl CacheModel {
     //
     // TODO: Entry size should probably also play a role here
     //
-    fn cost_model(&self, age: usize) -> Cost {
-        if age < self.l1_entries {
-            0.0
-        } else if age < self.l2_entries {
-            1.0
-        } else if age < self.l3_entries {
-            L2_MISS_COST / L1_MISS_COST
+    fn cost_model(&self, age: Option<usize>) -> Cost {
+        if let Some(age) = age {
+            if age < self.l1_entries {
+                0.0
+            } else if age < self.l2_entries {
+                1.0
+            } else if age < self.l3_entries {
+                L2_MISS_COST / L1_MISS_COST
+            } else {
+                L3_MISS_COST / L1_MISS_COST
+            }
         } else {
-            L3_MISS_COST / L1_MISS_COST
+            NEW_ENTRY_COST / L1_MISS_COST
         }
     }
 
@@ -100,20 +118,22 @@ impl CacheSimulation {
 
     /// Check out how many other entries have been accessed since a cache entry
     /// was last accessed, return 0 if the entry was never accessed.
-    fn age(&self, entry: Entry) -> usize {
+    fn age(&self, entry: Entry) -> Option<usize> {
         let last_access_time = self.last_accesses[entry as usize];
         if last_access_time == 0 {
-            0
+            None
         } else {
-            self.last_accesses
-                .iter()
-                .filter(|&&access_time| access_time > last_access_time)
-                .count()
+            Some(
+                self.last_accesses
+                    .iter()
+                    .filter(|&&access_time| access_time > last_access_time)
+                    .count(),
+            )
         }
     }
 
     /// Simulate a cache access and return previous entry age
-    fn access(&mut self, entry: Entry) -> usize {
+    fn access(&mut self, entry: Entry) -> Option<usize> {
         let age = self.age(entry);
         self.last_accesses[entry as usize] = self.clock;
         self.clock += 1;
@@ -123,5 +143,13 @@ impl CacheSimulation {
     /// Simulate a cache access and return its cost
     pub fn simulate_access(&mut self, model: &CacheModel, entry: Entry) -> Cost {
         model.cost_model(self.access(entry))
+    }
+
+    /// Count the number of cache entries that were accessed so far
+    pub fn num_accessed_entries(&self) -> usize {
+        self.last_accesses
+            .iter()
+            .filter(|&&access_time| access_time != 0)
+            .count()
     }
 }
