@@ -53,7 +53,7 @@ impl PriorizedPartialPaths {
         //   turns allows us to prune bad paths.
         // * Let's keep the path as close to nice (0, 1) steps as possible,
         //   given the aforementioned constraints.
-        -path.cost_so_far() + 0.95 * path.len() as f32 - 0.35 * path.extra_distance()
+        -path.cost_so_far() + 0.95 * path.len() as f32 - 0.1 * path.extra_distance()
     }
 
     /// Record a new partial path

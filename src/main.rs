@@ -5,6 +5,7 @@ mod pair_locality;
 use crate::pair_locality::PairLocalityTester;
 use genawaiter::{stack::let_gen, yield_};
 use space_filler::{hilbert, morton, CurveIdx};
+use std::time::Duration;
 
 /// Integer type used for counting radio feeds
 type FeedIdx = space_filler::Coordinate;
@@ -139,6 +140,7 @@ fn main() {
                         max_radius,
                         &mut cumulative_cost[..],
                         tolerance,
+                        Duration::from_millis(15_010),
                     ) {
                         println!(
                             "  * Found better paths with cumulative cost {:?}",

@@ -11,7 +11,10 @@ use crate::{
     cache::{self, CacheModel, L1_MISS_COST, NEW_ENTRY_COST},
     FeedIdx, MAX_FEEDS,
 };
-use std::fmt::Write;
+use std::{
+    fmt::Write,
+    time::{Duration, Instant},
+};
 
 /// Configure the level of debugging features from brute force path search.
 ///
@@ -42,6 +45,7 @@ pub fn search_best_path(
     max_radius: FeedIdx,
     best_cumulative_cost: &mut [cache::Cost],
     tolerance: cache::Cost,
+    timeout: Duration,
 ) -> Option<Path> {
     // Let's be reasonable here
     let mut total_cost_target = *best_cumulative_cost.last().unwrap() - 1.0;
@@ -87,8 +91,19 @@ pub fn search_best_path(
     // into our list of next actions.
     let mut best_path = None;
     let mut rng = rand::thread_rng();
-    let mut path_counter = 0u64;
+    let mut progress_monitor = ProgressMonitor::new(path_length, &priorized_partial_paths);
     while let Some(partial_path) = priorized_partial_paths.pop(&mut rng) {
+        // Check the watchdog timer
+        if progress_monitor.watchdog_timer() > timeout {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                println!(
+                    "    - No significant progress in {:.1}s, aborting...",
+                    progress_monitor.watchdog_timer().as_secs_f32()
+                );
+            }
+            break;
+        }
+
         // Indicate which partial path was chosen
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             let mut path_display = String::new();
@@ -146,36 +161,7 @@ pub fn search_best_path(
                 }
 
                 // Monitor progress
-                if BRUTE_FORCE_DEBUG_LEVEL >= 1 && path_counter % 300_000_000 == 0 {
-                    println!("  * Processed {}M path steps", path_counter / 1_000_000,);
-
-                    let paths_by_len = priorized_partial_paths.paths_by_len();
-                    let display_path_counts = |header, paths_by_len: &Vec<usize>| {
-                        print!("    - {:<25}: ", header);
-                        for partial_length in 1..path_length {
-                            print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
-                        }
-                        println!();
-                    };
-                    display_path_counts("Partial paths by length", &paths_by_len);
-                    display_path_counts(
-                        "Priorized paths by length",
-                        &priorized_partial_paths.high_priority_paths_by_len(),
-                    );
-
-                    let mut max_next_steps = 1.0f64;
-                    let mut max_total_steps = 0.0f64;
-                    for partial_length in (1..path_length).rev() {
-                        max_next_steps *= (path_length - partial_length) as f64;
-                        let num_paths = *paths_by_len.get(partial_length - 1).unwrap_or(&0);
-                        max_total_steps += num_paths as f64 * max_next_steps;
-                    }
-                    println!(
-                        "    - Exhaustive search space  : 10^{} paths",
-                        max_total_steps.log10()
-                    );
-                }
-                path_counter += 1;
+                progress_monitor.record_step(&priorized_partial_paths);
 
                 // Does it seem worthwhile to try to go there?
                 let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
@@ -223,10 +209,13 @@ pub fn search_best_path(
                                 .zip(best_cumulative_cost.iter())
                                 .collect::<Box<[_]>>();
                             println!(
-                            "  * Reached new total cache cost record {} ({} w/o new entries) with path and cumulative cost {:?}",
-                            next_cost, next_cost - new_entries_cost, path_cost
-                        );
+                                "  * Reached new total cache cost record {} ({} w/o new entries) with path and cumulative cost {:?}",
+                                next_cost, next_cost - new_entries_cost, path_cost
+                            );
                         }
+
+                        // Reset the watchdog timer
+                        progress_monitor.reset_watchdog();
 
                         // Now record that path and look for a better one
                         best_path = Some(final_path);
@@ -249,4 +238,154 @@ pub fn search_best_path(
 
     // Return the optimal path, if any, along with its cache cost
     best_path
+}
+
+// ---
+
+/// Mechanism to track brute force search progress
+struct ProgressMonitor {
+    path_length: usize,
+    total_path_steps: u64,
+    last_path_steps: u64,
+    initial_time: Instant,
+    last_report: Instant,
+    last_watchdog_reset: Instant,
+    initial_exhaustive_steps: f64,
+    last_exhaustive_steps: f64,
+}
+//
+impl ProgressMonitor {
+    /// Set up a way to monitor brute force search progress
+    pub fn new(path_length: usize, initial_paths: &PriorizedPartialPaths) -> Self {
+        let initial_time = Instant::now();
+        let initial_exhaustive_steps =
+            Self::check_exhaustive_steps(path_length, initial_paths, false);
+        Self {
+            path_length,
+            total_path_steps: 0,
+            last_path_steps: 0,
+            initial_time,
+            last_report: initial_time,
+            last_watchdog_reset: initial_time,
+            initial_exhaustive_steps,
+            last_exhaustive_steps: initial_exhaustive_steps,
+        }
+    }
+
+    /// Record that a path step has been taken, print periodical reports
+    pub fn record_step(&mut self, paths: &PriorizedPartialPaths) {
+        // Only report on progress infrequently so that search isn't slowed down
+        self.total_path_steps += 1;
+        const CLOCK_CHECK_RATE: u64 = 1 << 18;
+        const REPORT_RATE: Duration = Duration::from_secs(5);
+        if self.total_path_steps % CLOCK_CHECK_RATE == 0 && self.last_report.elapsed() > REPORT_RATE
+        {
+            let elapsed_time = self.last_report.elapsed();
+            let new_path_steps = self.total_path_steps - self.last_path_steps;
+
+            // In verbose mode, display progress information
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                let new_million_steps = new_path_steps as f32 / 1_000_000.0;
+                println!(
+                    "  * Processed {}M new path steps ({:.1}M steps/s)",
+                    new_million_steps.round(),
+                    (new_million_steps as f32 / elapsed_time.as_secs_f32())
+                );
+            }
+
+            // Check how much of the initial search space we covered
+            let remaining_exhaustive_steps =
+                Self::check_exhaustive_steps(self.path_length, paths, BRUTE_FORCE_DEBUG_LEVEL >= 1);
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                println!(
+                    "    - Remaining search space: 10^{:.2} path steps ({:.2}% processed)",
+                    remaining_exhaustive_steps.log10(),
+                    (1.0 - (remaining_exhaustive_steps / self.initial_exhaustive_steps)) * 100.0
+                );
+            }
+
+            // Check if we covered a significant fraction of the search space
+            // that we last observed.
+            const SIGNIFICANT_PROGRESS_THRESHOLD: f64 = 0.05;
+            let last_processed_steps = self.last_exhaustive_steps - remaining_exhaustive_steps;
+            let rel_processed_steps = last_processed_steps / self.last_exhaustive_steps;
+            if rel_processed_steps > SIGNIFICANT_PROGRESS_THRESHOLD {
+                self.reset_watchdog();
+            }
+
+            // Check how fast we are covering the search space
+            let total_time = self.initial_time.elapsed();
+            let steps_per_sec = last_processed_steps / total_time.as_secs_f64();
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                println!(
+                    "    - Current search speed: 10^{:.2} path steps/s (10^{:.0}x)",
+                    steps_per_sec.log10(),
+                    (last_processed_steps / new_path_steps as f64)
+                        .log10()
+                        .round()
+                );
+                println!(
+                    "    - Remaining time at that speed: {}s",
+                    (remaining_exhaustive_steps / steps_per_sec).ceil()
+                );
+            }
+
+            self.last_path_steps = self.total_path_steps;
+            self.last_report = Instant::now();
+            self.last_exhaustive_steps = remaining_exhaustive_steps;
+        }
+    }
+
+    /// Check out how much time has elapsed since the last major event
+    pub fn watchdog_timer(&self) -> Duration {
+        self.last_watchdog_reset.elapsed()
+    }
+
+    /// Reset the watchdog timer to signal that an important event has occured,
+    /// which suggests that it might be worthwhile to continue the search.
+    pub fn reset_watchdog(&mut self) {
+        self.last_watchdog_reset = Instant::now();
+    }
+
+    /// Check number of steps that would be remaining in an exhaustive search
+    ///
+    /// Our search is not exhaustive, but that's a good figure of merit of how
+    /// much of the path search space we have covered.
+    ///
+    fn check_exhaustive_steps(
+        path_length: usize,
+        paths: &PriorizedPartialPaths,
+        verbose: bool,
+    ) -> f64 {
+        // Compute histogram of number of paths by path length
+        let paths_by_len = paths.paths_by_len();
+
+        // In verbose mode, display that + high priority paths
+        if verbose {
+            let display_path_counts = |header, paths_by_len: &Vec<usize>| {
+                print!("    - {:<25}: ", header);
+                for partial_length in 1..path_length {
+                    print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                }
+                println!();
+            };
+            display_path_counts("Partial paths by length", &paths_by_len);
+            display_path_counts(
+                "Priorized paths by length",
+                &paths.high_priority_paths_by_len(),
+            );
+        }
+
+        // Compute remaining exhaustive search space
+        let mut max_next_steps = 1.0f64;
+        let mut max_total_steps = 0.0f64;
+        for partial_length in (1..path_length).rev() {
+            max_next_steps *= (path_length - partial_length) as f64;
+            let num_paths = *paths_by_len.get(partial_length - 1).unwrap_or(&0);
+            max_total_steps += num_paths as f64 * max_next_steps;
+        }
+
+        // Return exhaustive search space
+        max_total_steps
+    }
 }
