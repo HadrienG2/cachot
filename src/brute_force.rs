@@ -6,7 +6,7 @@ use crate::{
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
 use rand::prelude::*;
-use std::{fmt::Write, rc::Rc};
+use std::{collections::VecDeque, fmt::Write, rc::Rc};
 
 /// Configure the level of debugging features from brute force path search.
 ///
@@ -510,7 +510,7 @@ struct PriorizedPartialPaths {
     storage: Vec<(Priority, Vec<PartialPath>)>,
 
     /// Mechanism to reuse inner Vec allocations
-    storage_morgue: Vec<Vec<PartialPath>>,
+    storage_morgue: VecDeque<Vec<PartialPath>>,
 
     /// Mechanism to periodically leave path selection to chance
     iters_since_last_rng: usize,
@@ -541,7 +541,7 @@ impl PriorizedPartialPaths {
         let priority = Self::priorize(&path);
         let storage_morgue = &mut self.storage_morgue;
         let mut make_new_path_list = |path| {
-            let mut new_paths = storage_morgue.pop().unwrap_or_default();
+            let mut new_paths = storage_morgue.pop_front().unwrap_or_default();
             new_paths.push(path);
             (priority, new_paths)
         };
@@ -588,13 +588,13 @@ impl PriorizedPartialPaths {
         };
 
         // If the set of highest priority paths is now empty, we remove it, but
-        // keep the allocation around for re-use
+        // keep some allocations around for re-use
         if highest_priority_paths.is_empty() {
             let (_priority, mut highest_priority_paths) = self.storage.pop().unwrap();
             highest_priority_paths.clear();
             const MAX_MORGUE_SIZE: usize = 1 << 5;
             if self.storage_morgue.len() < MAX_MORGUE_SIZE {
-                self.storage_morgue.push(highest_priority_paths);
+                self.storage_morgue.push_back(highest_priority_paths);
             }
         }
 
