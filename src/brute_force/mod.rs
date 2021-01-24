@@ -258,6 +258,7 @@ struct ProgressMonitor {
     initial_time: Instant,
     last_report: Instant,
     last_watchdog_reset: Instant,
+    last_watchdog_timer: Duration,
     initial_exhaustive_steps: f64,
     last_exhaustive_steps: f64,
 }
@@ -275,6 +276,7 @@ impl ProgressMonitor {
             initial_time,
             last_report: initial_time,
             last_watchdog_reset: initial_time,
+            last_watchdog_timer: Duration::new(0, 0),
             initial_exhaustive_steps,
             last_exhaustive_steps: initial_exhaustive_steps,
         }
@@ -341,12 +343,13 @@ impl ProgressMonitor {
             self.last_path_steps = self.total_path_steps;
             self.last_report = Instant::now();
             self.last_exhaustive_steps = remaining_exhaustive_steps;
+            self.last_watchdog_timer = self.last_watchdog_reset.elapsed();
         }
     }
 
     /// Check out how much time has elapsed since the last major event
     pub fn watchdog_timer(&self) -> Duration {
-        self.last_watchdog_reset.elapsed()
+        self.last_watchdog_timer
     }
 
     /// Reset the watchdog timer to signal that an important event has occured,
@@ -370,18 +373,11 @@ impl ProgressMonitor {
 
         // In verbose mode, display that + high priority paths
         if verbose {
-            let display_path_counts = |header, paths_by_len: &Vec<usize>| {
-                print!("    - {:<25}: ", header);
-                for partial_length in 1..path_length {
-                    print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
-                }
-                println!();
-            };
-            display_path_counts("Partial paths by length", &paths_by_len);
-            display_path_counts(
-                "Priorized paths by length",
-                &paths.high_priority_paths_by_len(),
-            );
+            print!("    - {:<25}: ", "Partial paths by length");
+            for partial_length in 1..path_length {
+                print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+            }
+            println!();
         }
 
         // Compute remaining exhaustive search space

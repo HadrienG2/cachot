@@ -18,23 +18,22 @@
 
 use super::PartialPath;
 use rand::prelude::*;
-use std::collections::VecDeque;
+use std::{cmp::Ordering, collections::BinaryHeap};
 
 /// PartialPath container that enables priorization and randomization
-#[derive(Default)]
 pub struct PriorizedPartialPaths {
-    /// Sorted list of prioritized ongoing paths
+    /// Priorized partial paths, grouped by length
     ///
-    /// I tried using a BTreeMap before, but since we're usually popping the
-    /// last element and inserting close to the end, a sorted list is faster.
-    ///
-    storage: Vec<(Priority, Vec<PartialPath>)>,
+    /// - The slot at index i contains paths of length self.min_path_len + i
+    /// - The first and last slot are guaranteed to contain some paths.
+    //
+    paths_by_len: Vec<BinaryHeap<PriorizedPath>>,
 
-    /// Fast access to the number of paths in storage
+    /// Minimal path length that hasn't been fully explored
+    min_path_len: usize,
+
+    /// Fast access to the total number of stored paths
     num_paths: usize,
-
-    /// Mechanism to reuse inner Vec allocations
-    storage_morgue: VecDeque<Vec<PartialPath>>,
 
     /// Mechanism to periodically leave path selection to chance
     iters_since_last_rng: usize,
@@ -45,135 +44,132 @@ type Priority = f32;
 impl PriorizedPartialPaths {
     /// Create the collection
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Prioritize a certain path wrt others, higher is more important
-    pub fn priorize(&self, path: &PartialPath) -> Priority {
-        // * The main goal is to avoid cache misses
-        // * In doing so, however, we must be careful to finish paths as 1/that
-        //   keeps our RAM usage bounded and 2/that updates our best path model,
-        //   which in turns allows us to prune bad paths.
-        // * Let's keep the path as close to nice (0, 1) steps as possible,
-        //   given the aforementioned constraints.
-        -path.cost_so_far() + (self.num_paths as f32 * 1e-3 * path.len() as f32)
-            - path.extra_distance()
+        Self {
+            paths_by_len: Vec::new(),
+            min_path_len: 1,
+            num_paths: 0,
+            iters_since_last_rng: 0,
+        }
     }
 
     /// Record a new partial path
     #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
-        // Count the input path, priorize it, and round the priority so that we
-        // tend to have a small number of priority classes.
-        self.num_paths += 1;
-        let priority = (self.priorize(&path) * 2.0).round() * 0.5;
-
-        // If that priority is new to us, we'll need to make a new list for it,
-        // reusing allocations from past lists if we have some spare ones
-        let storage_morgue = &mut self.storage_morgue;
-        let mut make_new_path_list = |path| {
-            let mut new_paths = storage_morgue.pop_front().unwrap_or_default();
-            new_paths.push(path);
-            (priority, new_paths)
-        };
-
-        // Inject the priorized paths into our internal storage
-        for (idx, (curr_priority, curr_paths)) in self.storage.iter_mut().enumerate().rev() {
-            if *curr_priority == priority {
-                curr_paths.push(path);
-                return;
-            } else if *curr_priority < priority {
-                self.storage.insert(idx + 1, make_new_path_list(path));
-                return;
-            }
+        // Create storage for paths of that length if we don't already have it
+        let relative_len = path.len() - self.min_path_len + 1;
+        if self.paths_by_len.len() < relative_len {
+            self.paths_by_len.resize(relative_len, BinaryHeap::new());
         }
-        self.storage.insert(0, make_new_path_list(path));
+
+        // Push that path into the heap for paths of its length and keep track
+        // of the total number of paths
+        self.paths_by_len[relative_len - 1].push(PriorizedPath(path));
+        self.num_paths += 1;
     }
 
     /// Extract one of the highest-priority paths
     #[inline(always)]
     pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
-        // Find the set of highest priority paths
-        let (_priority, highest_priority_paths) = self.storage.last_mut()?;
-        debug_assert!(!highest_priority_paths.is_empty());
-
-        // If there are multiple paths th choose from...
-        let path = if highest_priority_paths.len() != 1 {
-            // ...periodically pick a random high-priority path in order to
-            // reduce the odd of the algorithm getting stuck in a bad region of
-            // the search space as a result of following an overly regular
-            // search pattern. But don't do it too often as it gets expensive,
-            // especially when there are lots of high-priority path. Instead,
-            // favor picking the most accessible high-priority path at the end.
-            const RNG_AVERSION: f32 = 0.1;
-            let rng_threshold = (highest_priority_paths.len() as f32) * RNG_AVERSION;
-            if self.iters_since_last_rng as f32 > rng_threshold {
-                self.iters_since_last_rng = 0;
-                let path_idx = rng.gen_range(0..highest_priority_paths.len());
-                highest_priority_paths.remove(path_idx)
-            } else {
-                self.iters_since_last_rng += 1;
-                highest_priority_paths.pop().unwrap()
-            }
-        } else {
-            // If there's only one path, we must take that one
-            highest_priority_paths.pop().unwrap()
-        };
-
-        // If the set of highest priority paths is now empty, we remove it from
-        // the set of priorized paths, but keep some allocations around.
-        if highest_priority_paths.is_empty() {
-            let (_priority, mut highest_priority_paths) = self.storage.pop().unwrap();
-            highest_priority_paths.clear();
-            const MAX_MORGUE_SIZE: usize = 1 << 5;
-            if self.storage_morgue.len() < MAX_MORGUE_SIZE {
-                self.storage_morgue.push_back(highest_priority_paths);
-            }
+        // Exit early if we have no path in store
+        if self.num_paths == 0 {
+            return None;
         }
 
-        // Finally, we return the chosen path
+        // Pick a minimal path length according to memory pressure
+        //
+        // We want to explore shortest paths first, as that gives us more
+        // complete information about longer paths. But if we explored all paths
+        // of length 0, then all paths of length 1, ..., we would 1/run out of
+        // RAM and 2/take a huge amount of time to finish the first path, which
+        // is bad because every path we finish may feed back information into
+        // the path search algorithm
+        //
+        // Therefore, we compromize by forcing exploration of longer paths when
+        // we start to have too many paths in flight.
+        //
+        const MEMORY_PRESSURE: Priority = 1e-4;
+        let max_length_idx = self.paths_by_len.len() - 1;
+        let min_length_idx = ((MEMORY_PRESSURE * self.num_paths as Priority).min(1.0)
+            * max_length_idx as Priority) as usize;
+
+        // Find the first non-empty path length class in that range
+        let (length_idx, shortest_paths) = self
+            .paths_by_len
+            .iter_mut()
+            .enumerate()
+            .skip(min_length_idx)
+            .find(|(_idx, paths)| !paths.is_empty())
+            .expect("Should work if paths_by_len is not empty and shrunk to fit non-empty heaps");
+
+        // Pick the highest-priority path for that length
+        // TODO: Bring back the randomness, but this time use weighted index
+        //       sampling (and adjust random roll occurence frequency according
+        //       to the much greater cost of this method, which is expensive in
+        //       and of itself and requires us to collect our BinaryHeap into a
+        //       vec and then turn it back into a BinaryHeap).
+        let path = shortest_paths
+            .pop()
+            .expect("Should not be empty according to above selection")
+            .0;
+        debug_assert_eq!(path.len(), self.min_path_len + length_idx);
         self.num_paths -= 1;
-        Some(path)
-    }
 
-    /// Count the number of paths of each length within a vector of path
-    fn count_by_len(paths: &Vec<PartialPath>) -> Vec<usize> {
-        let mut histogram = Vec::new();
-        for path in paths {
-            if histogram.len() < path.len() {
-                histogram.resize(path.len(), 0);
+        // Keep self.paths_by_len as small as possible
+        if shortest_paths.len() == 0 {
+            if length_idx == 0 {
+                self.paths_by_len.remove(0);
+                self.min_path_len += 1;
+            } else if length_idx == max_length_idx {
+                let new_length = self
+                    .paths_by_len
+                    .iter()
+                    .rposition(|paths| !paths.is_empty())
+                    .map(|pos| pos + 1)
+                    .unwrap_or(0);
+                self.paths_by_len.truncate(new_length);
             }
-            histogram[path.len() - 1] += 1;
         }
-        histogram
-    }
 
-    /// Merge a result of count_by_len() with another
-    fn merge_counts(src1: Vec<usize>, src2: Vec<usize>) -> Vec<usize> {
-        let (mut target, mut src) = (src1, src2);
-        if target.len() < src.len() {
-            target.extend_from_slice(&src[target.len()..]);
-        }
-        src.truncate(target.len());
-        for (idx, src_count) in src.into_iter().enumerate() {
-            target[idx] += src_count;
-        }
-        target
+        // Return the chosen path
+        Some(path)
     }
 
     /// Count the total number of paths of each length that are currently stored
     pub fn paths_by_len(&self) -> Vec<usize> {
-        self.storage
-            .iter()
-            .map(|(_priority, path_vec)| Self::count_by_len(path_vec))
-            .fold(Vec::new(), |src1, src2| Self::merge_counts(src1, src2))
+        std::iter::repeat(0)
+            .take(self.min_path_len - 1)
+            .chain(self.paths_by_len.iter().map(|paths| paths.len()))
+            .collect()
     }
-
-    /// Like paths_by_len, but only counts the number of high-priority paths
-    pub fn high_priority_paths_by_len(&self) -> Vec<usize> {
-        self.storage
-            .last()
-            .map(|(_priority, path_vec)| Self::count_by_len(path_vec))
-            .unwrap_or(Vec::new())
+}
+//
+#[derive(Clone)]
+struct PriorizedPath(PartialPath);
+//
+impl PriorizedPath {
+    /// Prioritize a certain path with respect to other paths of equal length.
+    /// A higher priority means that a path will be processed first.
+    fn priority(&self) -> Priority {
+        -self.0.cost_so_far() - self.0.extra_distance()
+    }
+}
+//
+impl PartialEq for PriorizedPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority().eq(&other.priority())
+    }
+}
+//
+impl PartialOrd for PriorizedPath {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.priority().partial_cmp(&other.priority())
+    }
+}
+//
+impl Eq for PriorizedPath {}
+//
+impl Ord for PriorizedPath {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(&other).unwrap()
     }
 }

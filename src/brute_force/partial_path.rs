@@ -19,6 +19,7 @@ const fn div_round_up(num: usize, denom: usize) -> usize {
 const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
 /// Path which we are in the process of exploring
+#[derive(Clone)]
 pub struct PartialPath {
     // TODO: Consider replacing Rc with something that allows allocation reuse
     path: Rc<PathElems>,
