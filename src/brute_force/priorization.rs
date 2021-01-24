@@ -32,6 +32,9 @@ pub struct PriorizedPartialPaths {
     /// Minimal path length that hasn't been fully explored
     min_path_len: usize,
 
+    /// Maximal number of steps that must be taken to finish one minimal path
+    max_path_steps: usize,
+
     /// Fast access to the total number of stored paths
     num_paths: usize,
 
@@ -43,10 +46,12 @@ type Priority = f32;
 //
 impl PriorizedPartialPaths {
     /// Create the collection
-    pub fn new() -> Self {
+    pub fn new(full_path_len: usize) -> Self {
+        let max_path_len = full_path_len - 1;
         Self {
-            paths_by_len: Vec::new(),
+            paths_by_len: Vec::with_capacity(max_path_len),
             min_path_len: 1,
+            max_path_steps: max_path_len - 1,
             num_paths: 0,
             iters_since_last_rng: 0,
         }
@@ -87,10 +92,25 @@ impl PriorizedPartialPaths {
         // Therefore, we compromize by forcing exploration of longer paths when
         // we start to have too many paths in flight.
         //
-        const MEMORY_PRESSURE: Priority = 1e-6;
+        // Our general strategy for this is that we have a memory budget,
+        // expressed as a number of paths that we're willing to store, and when
+        // we run out of that budget, we rush to finish longer paths.
+        //
+        // If we did just that, however, we would accumulate a huge number of
+        // short paths and then be forced to explore those short paths one by
+        // one, without any priorization on longer paths. So instead, what we
+        // conceptually do is that we spread the path budget between path
+        // lengths: if our path budget is 10k paths and our path can take at
+        // most 10 steps, then we allow ourselves to store 1k variants of the
+        // first step, 1k variants of the second step, etc.
+        //
+        const MEMORY_PRESSURE: Priority = 1e-6; // TODO: Tune down if bringing back rng
         let max_length_idx = self.paths_by_len.len() - 1;
-        let min_length_idx = ((MEMORY_PRESSURE * self.num_paths as Priority).min(1.0)
-            * max_length_idx as Priority) as usize;
+        debug_assert!(max_length_idx <= self.max_path_steps);
+        // TODO: Replace truncation with random coin flip between idx and idx + 1
+        let min_length_idx = (((MEMORY_PRESSURE * self.num_paths as Priority).min(1.0)
+            * self.max_path_steps as Priority) as usize)
+            .min(max_length_idx);
 
         // Find the first non-empty path length class in that range
         let (length_idx, shortest_paths) = self
@@ -119,6 +139,11 @@ impl PriorizedPartialPaths {
             if length_idx == 0 {
                 self.paths_by_len.remove(0);
                 self.min_path_len += 1;
+                if self.max_path_steps > 0 {
+                    self.max_path_steps -= 1;
+                } else {
+                    debug_assert_eq!(self.num_paths, 0);
+                }
             } else if length_idx == max_length_idx {
                 let new_length = self
                     .paths_by_len

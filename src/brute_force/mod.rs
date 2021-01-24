@@ -80,7 +80,7 @@ pub fn search_best_path(
     //   from the symmetric point (num_points-y, num_points-x), so we don't need
     //   to explore both of these starting points to find the optimal solution.
     //
-    let mut priorized_partial_paths = PriorizedPartialPaths::new();
+    let mut priorized_partial_paths = PriorizedPartialPaths::new(path_length);
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
             priorized_partial_paths.push(PartialPath::new(&cache_model, [start_x, start_y]));
