@@ -87,7 +87,7 @@ impl PriorizedPartialPaths {
         // Therefore, we compromize by forcing exploration of longer paths when
         // we start to have too many paths in flight.
         //
-        const MEMORY_PRESSURE: Priority = 1e-4;
+        const MEMORY_PRESSURE: Priority = 1e-6;
         let max_length_idx = self.paths_by_len.len() - 1;
         let min_length_idx = ((MEMORY_PRESSURE * self.num_paths as Priority).min(1.0)
             * max_length_idx as Priority) as usize;

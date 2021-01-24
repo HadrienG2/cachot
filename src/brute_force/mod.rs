@@ -373,9 +373,9 @@ impl ProgressMonitor {
 
         // In verbose mode, display that + high priority paths
         if verbose {
-            print!("    - {:<25}: ", "Partial paths by length");
+            print!("    - Partial paths by length: ");
             for partial_length in 1..path_length {
-                print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                print!("{} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
             }
             println!();
         }
