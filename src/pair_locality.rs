@@ -47,7 +47,7 @@ impl PairLocalityTester {
                 let prev_accessed_entries = cache_sim.num_accessed_entries();
                 let feed_cost = cache_sim.simulate_access(&self.cache_model, feed);
                 let is_new_entry = cache_sim.num_accessed_entries() != prev_accessed_entries;
-                let new_entry_str = if is_new_entry { " (new entry)" } else { "" };
+                let new_entry_str = if is_new_entry { " (first access)" } else { "" };
                 if self.debug_level >= 2 {
                     println!(
                         "  * Accessed feed {} for cache cost {}{}",
@@ -59,7 +59,7 @@ impl PairLocalityTester {
                     is_new_entry as u8 as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
             }
             let new_entries_str = if pair_entries_cost != 0.0 {
-                format!(" ({} from new entries)", pair_entries_cost)
+                format!(" ({} from first accesses)", pair_entries_cost)
             } else {
                 String::new()
             };
@@ -81,14 +81,14 @@ impl PairLocalityTester {
         }
         match self.debug_level {
             0 => println!(
-                "Total cache cost of iterator \"{}\" is {} ({} w/o new entries, {:.2} per feed load)",
+                "Total cache cost of iterator \"{}\" is {}, {} w/o first accesses, {:.2} per feed load",
                 name,
                 total_cost,
                 total_cost - new_entries_cost,
                 (total_cost - new_entries_cost) / (feed_load_count as cache::Cost)
             ),
             _ => println!(
-                "- Total cache cost of this iterator is {} ({} w/o new entries, {:.2} per feed load)",
+                "- Total cache cost of this iterator is {}, {} w/o first accesses, {:.2} per feed load",
                 total_cost,
                 total_cost - new_entries_cost,
                 (total_cost - new_entries_cost) / (feed_load_count as cache::Cost)

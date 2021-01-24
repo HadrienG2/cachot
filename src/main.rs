@@ -144,11 +144,16 @@ fn main() {
                         tolerance,
                         Duration::from_secs(60),
                     ) {
+                        println!("  * Found a better path at cumulative cost tolerance {} and search radius {}:", tolerance, max_radius);
                         println!(
-                            "  * Found better path {:?} with total cost {}",
-                            path,
-                            best_cumulative_cost.last().unwrap(),
+                            "    - Cache cost w/o first accesses: {}",
+                            best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
                         );
+                        println!(
+                            "    - Deviation from unit steps: {:.2}",
+                            best_extra_distance
+                        );
+                        println!("    - Path: {:?}", path,);
                     } else {
                         println!("  * Did not find any better path at that tolerance");
                     }
