@@ -25,8 +25,8 @@ use std::collections::VecDeque;
 pub struct PriorizedPartialPaths {
     /// Sorted list of prioritized ongoing paths
     ///
-    /// I tried using a BTreeMap before, but since we're always popping the last
-    /// element and inserting close to the end, a sorted list is better.
+    /// I tried using a BTreeMap before, but since we're usually popping the
+    /// last element and inserting close to the end, a sorted list is faster.
     ///
     storage: Vec<(Priority, Vec<PartialPath>)>,
 
