@@ -203,22 +203,22 @@ pub fn search_best_path(
                         let new_entries_cost =
                             num_feeds as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
                         if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
-                            println!("    - Reached a new cache cost or extra distance record!");
+                            println!("  * Reached a new cache cost or extra distance record!");
                             println!(
-                                "      * Total cache cost was {} ({} w/o new entries), extra distance was {:.2}",
+                                "    - Total cache cost was {} ({} w/o new entries), extra distance was {:.2}",
                                 next_cost,
                                 next_cost - new_entries_cost,
                                 partial_path.extra_distance()
                             );
                         }
                         if BRUTE_FORCE_DEBUG_LEVEL == 1 {
-                            println!("      * Path was {:?}", final_path);
+                            println!("    - Path was {:?}", final_path);
                         } else if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                             let path_cost = final_path
                                 .iter()
                                 .zip(best_cumulative_cost.iter())
                                 .collect::<Box<[_]>>();
-                            println!("      * Path and cumulative cost was {:?}", path_cost);
+                            println!("    - Path and cumulative cost was {:?}", path_cost);
                         }
 
                         // Reset the watchdog timer
