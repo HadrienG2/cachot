@@ -35,6 +35,11 @@ pub const L3_MISS_COST: Cost = 60.0;
 ///
 pub const NEW_ENTRY_COST: Cost = 0.75 * L1_MISS_COST;
 
+/// Minimum cache cost of accessing N entries, in units of L1 cache misses
+pub fn min_cache_cost(num_entries: Entry) -> Cost {
+    num_entries as Cost * NEW_ENTRY_COST / L1_MISS_COST
+}
+
 /// CPU cache model, used for evaluating locality merits of 2D iteration schemes
 #[derive(Debug)]
 pub struct CacheModel {

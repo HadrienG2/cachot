@@ -2,7 +2,7 @@ mod brute_force;
 pub(crate) mod cache;
 mod pair_locality;
 
-use crate::pair_locality::PairLocalityTester;
+use crate::{brute_force::StepDistance, pair_locality::PairLocalityTester};
 use genawaiter::{stack::let_gen, yield_};
 use space_filler::{hilbert, morton, CurveIdx};
 use std::time::Duration;
@@ -121,15 +121,16 @@ fn main() {
             locality_tester.test_feed_pair_locality("Hilbert curve", hilbert);
 
             // Tell which iterator got the best results
-            let mut cumulative_cost = locality_tester.announce_best_iterator().to_owned();
+            let mut best_cumulative_cost = locality_tester.announce_best_iterator().to_owned();
 
             // Now, let's try to brute-force a better iterator. First, evaluate
             // all possible paths through the iteration domain where we don't
             // step by more than (for now) [1, 1]...
             println!("\nPerforming brute force search for a better path...");
             let mut tolerance = 0.0;
-            while tolerance < *cumulative_cost.last().unwrap() {
-                for max_radius in 1..num_feeds {
+            let mut best_extra_distance = StepDistance::MAX;
+            while tolerance < *best_cumulative_cost.last().unwrap() {
+                'radius: for max_radius in 1..num_feeds {
                     println!(
                         "- Using cumulative cost tolerance {} and search radius {}",
                         tolerance, max_radius
@@ -138,20 +139,24 @@ fn main() {
                         num_feeds,
                         entry_size,
                         max_radius,
-                        &mut cumulative_cost[..],
+                        &mut best_cumulative_cost[..],
+                        &mut best_extra_distance,
                         tolerance,
                         Duration::from_secs(60),
                     ) {
                         println!(
                             "  * Found better path {:?} with total cost {}",
                             path,
-                            cumulative_cost.last().unwrap(),
+                            best_cumulative_cost.last().unwrap(),
                         );
-                        if *cumulative_cost.last().unwrap() == 1.0 {
-                            println!("  * We won't be able to do any better, quit here.");
-                        }
                     } else {
                         println!("  * Did not find any better path at that tolerance");
+                    }
+                    if *best_cumulative_cost.last().unwrap()
+                        == 1.0 + cache::min_cache_cost(num_feeds)
+                    {
+                        println!("  * We won't be able to do any better by increasing the radius.");
+                        break 'radius;
                     }
                 }
                 tolerance += 1.0;

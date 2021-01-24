@@ -47,7 +47,7 @@ struct PathElems {
 }
 //
 /// Total distance that was "walked" across a path step
-type StepDistance = f32;
+pub type StepDistance = f32;
 //
 impl PartialPath {
     /// Index of a certain coordinate in the visited_pairs bitvec

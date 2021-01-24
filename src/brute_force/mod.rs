@@ -4,7 +4,7 @@
 mod partial_path;
 mod priorization;
 
-pub use self::partial_path::PartialPath;
+pub use self::partial_path::{PartialPath, StepDistance};
 
 use self::priorization::PriorizedPartialPaths;
 use crate::{
@@ -25,7 +25,8 @@ use std::{
 /// 0 = Don't log anything.
 /// 1 = Log search goals, top-level search progress, and the first path that
 ///     achieves a new total cache cost record.
-/// 2 = Log per-step cumulative cache costs when a record is achieved.
+/// 2 = Log per-step cumulative cache costs when a record is achieved, and
+///     print regular progress reports.
 /// 3 = Log every time we take a step on a path.
 /// 4 = Log the process of searching for a next step on a path.
 ///
@@ -44,17 +45,18 @@ pub fn search_best_path(
     entry_size: usize,
     max_radius: FeedIdx,
     best_cumulative_cost: &mut [cache::Cost],
+    best_extra_distance: &mut StepDistance,
     tolerance: cache::Cost,
     timeout: Duration,
 ) -> Option<Path> {
     // Let's be reasonable here
-    let mut total_cost_target = *best_cumulative_cost.last().unwrap() - 1.0;
+    let mut last_cost_record = *best_cumulative_cost.last().unwrap();
     assert!(
         num_feeds > 1
             && num_feeds <= MAX_FEEDS
             && max_radius > 0
             && entry_size > 0
-            && total_cost_target >= 0.0
+            && last_cost_record >= 1.0 + cache::min_cache_cost(num_feeds)
     );
 
     // Set up the cache model
@@ -117,7 +119,7 @@ pub fn search_best_path(
         // Ignore that path if we found another solution which is so good that
         // it's not worth exploring anymore.
         let best_current_cost = best_cumulative_cost[partial_path.len() - 1];
-        if partial_path.cost_so_far() > (best_current_cost + tolerance).min(total_cost_target) {
+        if partial_path.cost_so_far() > (best_current_cost + tolerance).min(last_cost_record) {
             if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                 println!(
                     "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
@@ -167,7 +169,7 @@ pub fn search_best_path(
                 let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
                 let next_cost = next_step_eval.next_cost;
                 let best_next_cost = best_cumulative_cost[partial_path.len()];
-                if next_cost > (best_next_cost + tolerance).min(total_cost_target) {
+                if next_cost > (best_next_cost + tolerance).min(last_cost_record) {
                     if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                         println!(
                         "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
@@ -181,7 +183,10 @@ pub fn search_best_path(
                 // Are we finished ?
                 if partial_path.len() + 1 == path_length {
                     // Is this path better than what was observed before?
-                    if next_cost <= total_cost_target {
+                    if next_cost < last_cost_record
+                        || (next_cost == last_cost_record
+                            && partial_path.extra_distance() < *best_extra_distance)
+                    {
                         // If so, materialize the path into a vector
                         let mut final_path =
                             vec![FeedPair::default(); path_length].into_boxed_slice();
@@ -197,21 +202,23 @@ pub fn search_best_path(
                         // Announce victory
                         let new_entries_cost =
                             num_feeds as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
-                        if BRUTE_FORCE_DEBUG_LEVEL == 1 {
+                        if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                            println!("    - Reached a new cache cost or extra distance record!");
                             println!(
-                                "  * Reached new total cache cost record {} ({} w/o new entries) with path {:?}",
-                                next_cost, next_cost - new_entries_cost, final_path
+                                "      * Total cache cost was {} ({} w/o new entries), extra distance was {:.2}",
+                                next_cost,
+                                next_cost - new_entries_cost,
+                                partial_path.extra_distance()
                             );
                         }
-                        if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
+                        if BRUTE_FORCE_DEBUG_LEVEL == 1 {
+                            println!("      * Path was {:?}", final_path);
+                        } else if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                             let path_cost = final_path
                                 .iter()
                                 .zip(best_cumulative_cost.iter())
                                 .collect::<Box<[_]>>();
-                            println!(
-                                "  * Reached new total cache cost record {} ({} w/o new entries) with path and cumulative cost {:?}",
-                                next_cost, next_cost - new_entries_cost, path_cost
-                            );
+                            println!("      * Path and cumulative cost was {:?}", path_cost);
                         }
 
                         // Reset the watchdog timer
@@ -219,7 +226,8 @@ pub fn search_best_path(
 
                         // Now record that path and look for a better one
                         best_path = Some(final_path);
-                        total_cost_target = next_cost - 1.0;
+                        *best_extra_distance = partial_path.extra_distance();
+                        last_cost_record = next_cost;
                     }
                     continue;
                 }
@@ -284,7 +292,7 @@ impl ProgressMonitor {
             let new_path_steps = self.total_path_steps - self.last_path_steps;
 
             // In verbose mode, display progress information
-            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                 let new_million_steps = new_path_steps as f32 / 1_000_000.0;
                 println!(
                     "  * Processed {}M new path steps ({:.1}M steps/s)",
@@ -295,8 +303,8 @@ impl ProgressMonitor {
 
             // Check how much of the initial search space we covered
             let remaining_exhaustive_steps =
-                Self::check_exhaustive_steps(self.path_length, paths, BRUTE_FORCE_DEBUG_LEVEL >= 1);
-            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                Self::check_exhaustive_steps(self.path_length, paths, BRUTE_FORCE_DEBUG_LEVEL >= 2);
+            if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                 println!(
                     "    - Remaining search space: 10^{:.2} path steps ({:.2}% processed)",
                     remaining_exhaustive_steps.log10(),
@@ -316,7 +324,7 @@ impl ProgressMonitor {
             // Check how fast we are covering the search space
             let total_time = self.initial_time.elapsed();
             let steps_per_sec = last_processed_steps / total_time.as_secs_f64();
-            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+            if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                 println!(
                     "    - Current search speed: 10^{:.2} path steps/s (10^{:.0}x)",
                     steps_per_sec.log10(),
