@@ -42,8 +42,6 @@ pub struct PriorizedPartialPaths {
     iters_since_last_rng: usize,
 }
 //
-type Priority = f32;
-//
 impl PriorizedPartialPaths {
     /// Create the collection
     pub fn new(full_path_len: usize) -> Self {
@@ -104,12 +102,12 @@ impl PriorizedPartialPaths {
         // most 10 steps, then we allow ourselves to store 1k variants of the
         // first step, 1k variants of the second step, etc.
         //
-        const MEMORY_PRESSURE: Priority = 1e-6; // TODO: Tune down if bringing back rng
+        const MEMORY_PRESSURE: f32 = 1e-4; // TODO: Tune down if bringing back rng
         let max_length_idx = self.paths_by_len.len() - 1;
         debug_assert!(max_length_idx <= self.max_path_steps);
         // TODO: Replace truncation with random coin flip between idx and idx + 1
-        let min_length_idx = (((MEMORY_PRESSURE * self.num_paths as Priority).min(1.0)
-            * self.max_path_steps as Priority) as usize)
+        let min_length_idx = (((MEMORY_PRESSURE * self.num_paths as f32).min(1.0)
+            * self.max_path_steps as f32) as usize)
             .min(max_length_idx);
 
         // Find the first non-empty path length class in that range
@@ -171,11 +169,13 @@ impl PriorizedPartialPaths {
 #[derive(Clone)]
 struct PriorizedPath(PartialPath);
 //
+type Priority = (f32, f32);
+//
 impl PriorizedPath {
     /// Prioritize a certain path with respect to other paths of equal length.
     /// A higher priority means that a path will be processed first.
     fn priority(&self) -> Priority {
-        -self.0.cost_so_far() - self.0.extra_distance()
+        (-self.0.cost_so_far(), -self.0.extra_distance())
     }
 }
 //
