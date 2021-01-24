@@ -375,7 +375,7 @@ impl ProgressMonitor {
         if verbose {
             print!("    - Partial paths by length: ");
             for partial_length in 1..path_length {
-                print!("{} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                print!("{:>4} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
             }
             println!();
         }

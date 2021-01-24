@@ -16,7 +16,8 @@
 //! we are in the process of exploring in a data structure which allows
 //! priorizing the most promising tracks over others.
 
-use super::PartialPath;
+use super::{PartialPath, StepDistance};
+use crate::cache;
 use rand::prelude::*;
 use std::{cmp::Ordering, collections::BinaryHeap};
 
@@ -84,8 +85,8 @@ impl PriorizedPartialPaths {
         // complete information about longer paths. But if we explored all paths
         // of length 0, then all paths of length 1, ..., we would 1/run out of
         // RAM and 2/take a huge amount of time to finish the first path, which
-        // is bad because every path we finish may feed back information into
-        // the path search algorithm
+        // is bad because we feed back new information into the path search
+        // algorithm by finishing paths.
         //
         // Therefore, we compromize by forcing exploration of longer paths when
         // we start to have too many paths in flight.
@@ -105,10 +106,14 @@ impl PriorizedPartialPaths {
         const MEMORY_PRESSURE: f32 = 1e-4; // TODO: Tune down if bringing back rng
         let max_length_idx = self.paths_by_len.len() - 1;
         debug_assert!(max_length_idx <= self.max_path_steps);
-        // TODO: Replace truncation with random coin flip between idx and idx + 1
-        let min_length_idx = (((MEMORY_PRESSURE * self.num_paths as f32).min(1.0)
-            * self.max_path_steps as f32) as usize)
-            .min(max_length_idx);
+        let min_length_idx_float = ((MEMORY_PRESSURE * self.num_paths as f32).min(1.0)
+            * self.max_path_steps as f32)
+            .min(max_length_idx as f32);
+
+        // Use dithering to avoid going through a steep cutoff effect when
+        // memory pressure reaches a new threshold.
+        let min_length_idx = min_length_idx_float as usize
+            + (rng.gen::<f32>() < min_length_idx_float.fract()) as usize;
 
         // Find the first non-empty path length class in that range
         let (length_idx, shortest_paths) = self
@@ -120,11 +125,16 @@ impl PriorizedPartialPaths {
             .expect("Should work if paths_by_len is not empty and shrunk to fit non-empty heaps");
 
         // Pick the highest-priority path for that length
+        //
         // TODO: Bring back the randomness, but this time use weighted index
         //       sampling (and adjust random roll occurence frequency according
         //       to the much greater cost of this method, which is expensive in
         //       and of itself and requires us to collect our BinaryHeap into a
         //       vec and then turn it back into a BinaryHeap).
+        //
+        //       Handle composite priority in weighted index sampling by rolling
+        //       the cache cost, then the distance at that cache cost.
+        //
         let path = shortest_paths
             .pop()
             .expect("Should not be empty according to above selection")
@@ -169,7 +179,8 @@ impl PriorizedPartialPaths {
 #[derive(Clone)]
 struct PriorizedPath(PartialPath);
 //
-type Priority = (f32, f32);
+/// Priorize cache cost, then given equal cache cost priorize simplest path
+type Priority = (cache::Cost, StepDistance);
 //
 impl PriorizedPath {
     /// Prioritize a certain path with respect to other paths of equal length.
