@@ -103,7 +103,7 @@ impl PriorizedPartialPaths {
         // most 10 steps, then we allow ourselves to store 1k variants of the
         // first step, 1k variants of the second step, etc.
         //
-        const MEMORY_PRESSURE: f32 = 1e-4; // TODO: Tune down if bringing back rng
+        const MEMORY_PRESSURE: f32 = 1e-5;
         let max_length_idx = self.paths_by_len.len() - 1;
         debug_assert!(max_length_idx <= self.max_path_steps);
         let min_length_idx_float = ((MEMORY_PRESSURE * self.num_paths as f32).min(1.0)
