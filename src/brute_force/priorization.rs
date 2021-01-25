@@ -34,7 +34,7 @@ use std::{cmp::Ordering, collections::BinaryHeap};
 /// This algorithm tuning parameter controls the threshold of accumulated paths
 /// above which we start exploring longer paths.
 ///
-const MAX_STORED_PATHS: usize = 1_000_000;
+const MAX_STORED_PATHS: usize = 100_000;
 
 /// PartialPath container that enables priorization and randomization
 pub struct PriorizedPartialPaths {
@@ -51,11 +51,8 @@ pub struct PriorizedPartialPaths {
     /// Path length slot which we are currently processing
     curr_path_len: usize,
 
-    /// Direction in which we're going once done exploring curr_path_len
-    going_forward: bool,
-
-    /// Maximal number of paths of each length that we allow ourselves to store
-    max_paths_per_len: usize,
+    /// Threshold of next slot occupancy above which we move to the next slot
+    high_water_mark: usize,
 
     /// Mechanism to periodically leave path selection to chance
     iters_since_last_rng: usize,
@@ -65,13 +62,12 @@ impl PriorizedPartialPaths {
     /// Create the collection
     pub fn new(full_path_len: usize) -> Self {
         let max_path_len = full_path_len - 1;
-        let max_paths_per_len = MAX_STORED_PATHS / max_path_len;
+        let high_water_mark = Self::high_water_mark(max_path_len);
         Self {
-            paths_by_len: vec![BinaryHeap::with_capacity(max_paths_per_len); max_path_len],
+            paths_by_len: vec![BinaryHeap::with_capacity(high_water_mark); max_path_len],
             min_path_len: 1,
             curr_path_len: 0,
-            going_forward: true,
-            max_paths_per_len,
+            high_water_mark,
             iters_since_last_rng: 0,
         }
     }
@@ -80,8 +76,10 @@ impl PriorizedPartialPaths {
     #[inline(always)]
     pub fn push(&mut self, path: PartialPath) {
         debug_assert!(
-            path.len() == self.min_path_len + 1 // Initial algorithm seeding
-            || path.len() == self.min_path_len + 2 // Subsequent iterations
+            // Initial seeding
+            (self.min_path_len == 1 && self.curr_path_len == 0 && path.len() == 1)
+            // Subsequent iterations
+            || (path.len() == self.min_path_len + self.curr_path_len + 1)
         );
         let relative_len = path.len() - self.min_path_len + 1;
         self.paths_by_len[relative_len - 1].push(PriorizedPath(path));
@@ -98,45 +96,49 @@ impl PriorizedPartialPaths {
         // Select a path length slot according to availability of paths of the
         // currently selected length and memory pressure on longer paths
         loop {
-            // Common case where we still have paths available and the next
-            // path length slot isn't fully filled up.
-            let max_path_len = self.paths_by_len.len() - 1;
-            let no_paths_available = self.paths_by_len[self.curr_path_len].is_empty();
-            let next_slot_full = self.curr_path_len < max_path_len
-                && self.paths_by_len[self.curr_path_len + 1].len() >= self.max_paths_per_len;
-            if !no_paths_available && !next_slot_full {
+            // Compute threshold for moving to a previous path length
+            // The lower this is, the least frequently we switch between path
+            // length slots, but the more we tap into low-priority paths.
+            let low_water_mark = self.high_water_mark / 2;
+
+            // We stay on the same slot as long as...
+            // - Next slot (if any) isn't above high water mark
+            // - Current slot is above low water mark, for "middle" slots only
+            //   * Lowest-length slot may only go down, this is expected
+            //   * Highest-length slot should be fully flushed as this is what
+            //     feeds back information into the algorithm.
+            // - Current slot isn't empty
+            let max_len_slot = self.paths_by_len.len() - 1;
+            let on_first_slot = self.curr_path_len == 0;
+            let on_last_slot = self.curr_path_len == max_len_slot;
+            let curr_slot_empty = self.paths_by_len[self.curr_path_len].is_empty();
+            let curr_slot_low = !on_first_slot
+                && !on_last_slot
+                && self.paths_by_len[self.curr_path_len].len() < low_water_mark;
+            let next_slot_full = !on_last_slot
+                && self.paths_by_len[self.curr_path_len + 1].len() >= self.high_water_mark;
+            if !next_slot_full && !curr_slot_low && !curr_slot_empty {
                 break;
             }
 
-            // If the problem is availability of paths, check if we're
-            // processing the first path length, and if so shrink our path
-            // storage: we won't be observing more paths of that length.
-            if no_paths_available && self.curr_path_len == 0 {
+            // Handle edge case where we're done processing lowest-length paths
+            if on_first_slot && curr_slot_empty {
                 self.paths_by_len.remove(0);
                 if self.paths_by_len.is_empty() {
                     return None;
                 } else {
                     self.min_path_len += 1;
-                    self.max_paths_per_len = MAX_STORED_PATHS / self.paths_by_len.len();
+                    self.high_water_mark = Self::high_water_mark(self.paths_by_len.len());
                     continue;
                 }
             }
 
-            // Otherwise, move to the next path length
-            if self.going_forward {
-                if self.curr_path_len < max_path_len {
-                    self.curr_path_len += 1;
-                } else {
-                    self.going_forward = false;
-                    self.curr_path_len -= 1;
-                }
+            // Else move to the next/previous path length slot as appropriate
+            if curr_slot_low || curr_slot_empty {
+                self.curr_path_len -= 1;
             } else {
-                if self.curr_path_len > 0 {
-                    self.curr_path_len -= 1;
-                } else {
-                    self.going_forward = true;
-                    self.curr_path_len += 1;
-                }
+                debug_assert!(next_slot_full);
+                self.curr_path_len += 1;
             }
         }
 
@@ -159,7 +161,7 @@ impl PriorizedPartialPaths {
     /// record is achieved, which doesn't happen very often.
     ///
     pub fn prune(&mut self, mut should_prune: impl FnMut(&PartialPath) -> bool) {
-        let mut new_paths = BinaryHeap::with_capacity(self.max_paths_per_len);
+        let mut new_paths = BinaryHeap::with_capacity(self.high_water_mark);
         for old_paths in &mut self.paths_by_len {
             for path in old_paths.drain() {
                 if !should_prune(&path.0) {
@@ -168,6 +170,7 @@ impl PriorizedPartialPaths {
             }
             std::mem::swap(old_paths, &mut new_paths);
         }
+        self.curr_path_len = 0;
     }
 
     /// Count the total number of paths of each length that are currently stored
@@ -176,6 +179,11 @@ impl PriorizedPartialPaths {
             .take(self.min_path_len - 1)
             .chain(self.paths_by_len.iter().map(|paths| paths.len()))
             .collect()
+    }
+
+    /// Compute the high water mark for a certain number of paths
+    const fn high_water_mark(path_len_slots: usize) -> usize {
+        MAX_STORED_PATHS / path_len_slots
     }
 }
 //
