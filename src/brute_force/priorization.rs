@@ -19,6 +19,7 @@
 use super::{PartialPath, StepDistance};
 use crate::cache;
 use rand::prelude::*;
+use slotmap::SlotMap;
 use std::{cmp::Ordering, collections::BinaryHeap};
 
 /// Approximate limit on the number of stored paths in PriorizedPartialPaths
@@ -43,7 +44,17 @@ pub struct PriorizedPartialPaths {
     /// - The slot at index i contains paths of length self.min_path_len + i
     /// - The first slot at index 0 is guaranteed to contain some paths.
     //
-    paths_by_len: Vec<BinaryHeap<PriorizedPath>>,
+    priorized_paths_by_len: Vec<BinaryHeap<PriorizedPath>>,
+
+    /// Actual PartialPath storage
+    ///
+    /// The internal bookkeeping of BinaryHeap comes with some data movement,
+    /// which doesn't play well with large-ish data structures like
+    /// PartialPath. To eliminate this problem, PriorizedPath is only a
+    /// small-ish handle into the actual PartialPath storage, which is the
+    /// following slotmap.
+    ///
+    path_storage: SlotMap<slotmap::DefaultKey, PartialPath>,
 
     /// Minimal path length that hasn't been fully explored
     min_path_len: usize,
@@ -64,7 +75,8 @@ impl PriorizedPartialPaths {
         let max_path_len = full_path_len - 1;
         let high_water_mark = Self::high_water_mark(max_path_len);
         Self {
-            paths_by_len: vec![BinaryHeap::with_capacity(high_water_mark); max_path_len],
+            priorized_paths_by_len: vec![BinaryHeap::with_capacity(high_water_mark); max_path_len],
+            path_storage: SlotMap::with_capacity(MAX_STORED_PATHS),
             min_path_len: 1,
             curr_path_len: 0,
             high_water_mark,
@@ -82,14 +94,16 @@ impl PriorizedPartialPaths {
             || (path.len() == self.min_path_len + self.curr_path_len + 1)
         );
         let relative_len = path.len() - self.min_path_len + 1;
-        self.paths_by_len[relative_len - 1].push(PriorizedPath(path));
+        let priority = PriorizedPath::priority(&path);
+        let slot = self.path_storage.insert(path);
+        self.priorized_paths_by_len[relative_len - 1].push(PriorizedPath { priority, slot });
     }
 
     /// Extract one of the highest-priority paths
     #[inline(always)]
     pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath> {
         // Handle edge case where all paths have already been processed
-        if self.paths_by_len.is_empty() {
+        if self.priorized_paths_by_len.is_empty() {
             return None;
         }
 
@@ -108,27 +122,28 @@ impl PriorizedPartialPaths {
             //   * Highest-length slot should be fully flushed as this is what
             //     feeds back information into the algorithm.
             // - Current slot isn't empty
-            let max_len_slot = self.paths_by_len.len() - 1;
+            let max_len_slot = self.priorized_paths_by_len.len() - 1;
             let on_first_slot = self.curr_path_len == 0;
             let on_last_slot = self.curr_path_len == max_len_slot;
-            let curr_slot_empty = self.paths_by_len[self.curr_path_len].is_empty();
+            let curr_slot_empty = self.priorized_paths_by_len[self.curr_path_len].is_empty();
             let curr_slot_low = !on_first_slot
                 && !on_last_slot
-                && self.paths_by_len[self.curr_path_len].len() < low_water_mark;
+                && self.priorized_paths_by_len[self.curr_path_len].len() < low_water_mark;
             let next_slot_full = !on_last_slot
-                && self.paths_by_len[self.curr_path_len + 1].len() >= self.high_water_mark;
+                && self.priorized_paths_by_len[self.curr_path_len + 1].len()
+                    >= self.high_water_mark;
             if !next_slot_full && !curr_slot_low && !curr_slot_empty {
                 break;
             }
 
             // Handle edge case where we're done processing lowest-length paths
             if on_first_slot && curr_slot_empty {
-                self.paths_by_len.remove(0);
-                if self.paths_by_len.is_empty() {
+                self.priorized_paths_by_len.remove(0);
+                if self.priorized_paths_by_len.is_empty() {
                     return None;
                 } else {
                     self.min_path_len += 1;
-                    self.high_water_mark = Self::high_water_mark(self.paths_by_len.len());
+                    self.high_water_mark = Self::high_water_mark(self.priorized_paths_by_len.len());
                     continue;
                 }
             }
@@ -147,11 +162,17 @@ impl PriorizedPartialPaths {
         // TODO: Try again to use some intermittent randomization, but this time
         //       use weighted index sampling (and do it more rarely)
         //
+        let priorized_path = self.priorized_paths_by_len[self.curr_path_len]
+            .pop()
+            .expect("Should work after above loop");
+        debug_assert!(self.path_storage.contains_key(priorized_path.slot));
+        if !self.path_storage.contains_key(priorized_path.slot) {
+            unsafe { core::hint::unreachable_unchecked() };
+        }
         Some(
-            self.paths_by_len[self.curr_path_len]
-                .pop()
-                .expect("Should work after above loop")
-                .0,
+            self.path_storage
+                .remove(priorized_path.slot)
+                .expect("path_storage became inconsistent with priorized paths"),
         )
     }
 
@@ -162,9 +183,11 @@ impl PriorizedPartialPaths {
     ///
     pub fn prune(&mut self, mut should_prune: impl FnMut(&PartialPath) -> bool) {
         let mut new_paths = BinaryHeap::with_capacity(self.high_water_mark);
-        for old_paths in &mut self.paths_by_len {
+        for old_paths in &mut self.priorized_paths_by_len {
             for path in old_paths.drain() {
-                if !should_prune(&path.0) {
+                if should_prune(&self.path_storage[path.slot]) {
+                    self.path_storage.remove(path.slot);
+                } else {
                     new_paths.push(path);
                 }
             }
@@ -177,7 +200,7 @@ impl PriorizedPartialPaths {
     pub fn num_paths_by_len(&self) -> Vec<usize> {
         std::iter::repeat(0)
             .take(self.min_path_len - 1)
-            .chain(self.paths_by_len.iter().map(|paths| paths.len()))
+            .chain(self.priorized_paths_by_len.iter().map(|paths| paths.len()))
             .collect()
     }
 
@@ -188,7 +211,10 @@ impl PriorizedPartialPaths {
 }
 //
 #[derive(Clone)]
-struct PriorizedPath(PartialPath);
+struct PriorizedPath {
+    priority: Priority,
+    slot: slotmap::DefaultKey,
+}
 //
 /// Priorize cache cost, then given equal cache cost priorize simplest path
 type Priority = (cache::Cost, StepDistance);
@@ -196,20 +222,20 @@ type Priority = (cache::Cost, StepDistance);
 impl PriorizedPath {
     /// Prioritize a certain path with respect to other paths of equal length.
     /// A higher priority means that a path will be processed first.
-    fn priority(&self) -> Priority {
-        (-self.0.cost_so_far(), -self.0.extra_distance())
+    fn priority(path: &PartialPath) -> Priority {
+        (-path.cost_so_far(), -path.extra_distance())
     }
 }
 //
 impl PartialEq for PriorizedPath {
     fn eq(&self, other: &Self) -> bool {
-        self.priority().eq(&other.priority())
+        self.priority.eq(&other.priority)
     }
 }
 //
 impl PartialOrd for PriorizedPath {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.priority().partial_cmp(&other.priority())
+        self.priority.partial_cmp(&other.priority)
     }
 }
 //

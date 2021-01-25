@@ -10,6 +10,7 @@ edition = "2018"
 genawaiter = "0.99"
 rand = "0.8"
 space-filler = { git = "https://github.com/HadrienG2/space-filler.git" }
+slotmap = "1.0"
 
 [profile.release]
 debug = true
