@@ -369,13 +369,16 @@ impl ProgressMonitor {
         verbose: bool,
     ) -> f64 {
         // Compute histogram of number of paths by path length
-        let paths_by_len = paths.paths_by_len();
+        let num_paths_by_len = paths.num_paths_by_len();
 
         // In verbose mode, display that + high priority paths
         if verbose {
             print!("    - Partial paths by length: ");
             for partial_length in 1..path_length {
-                print!("{:>5} ", paths_by_len.get(partial_length - 1).unwrap_or(&0));
+                print!(
+                    "{:>5} ",
+                    num_paths_by_len.get(partial_length - 1).unwrap_or(&0)
+                );
             }
             println!();
         }
@@ -385,7 +388,7 @@ impl ProgressMonitor {
         let mut max_total_steps = 0.0f64;
         for partial_length in (1..path_length).rev() {
             max_next_steps *= (path_length - partial_length) as f64;
-            let num_paths = *paths_by_len.get(partial_length - 1).unwrap_or(&0);
+            let num_paths = *num_paths_by_len.get(partial_length - 1).unwrap_or(&0);
             max_total_steps += num_paths as f64 * max_next_steps;
         }
 
