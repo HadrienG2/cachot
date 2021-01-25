@@ -153,6 +153,23 @@ impl PriorizedPartialPaths {
         )
     }
 
+    /// Drop all stored paths which don't match a certain predicate
+    ///
+    /// This is very expensive, but only meant to be done when a new cache cost
+    /// record is achieved, which doesn't happen very often.
+    ///
+    pub fn prune(&mut self, mut should_prune: impl FnMut(&PartialPath) -> bool) {
+        let mut new_paths = BinaryHeap::with_capacity(self.max_paths_per_len);
+        for old_paths in &mut self.paths_by_len {
+            for path in old_paths.drain() {
+                if !should_prune(&path.0) {
+                    new_paths.push(path);
+                }
+            }
+            std::mem::swap(old_paths, &mut new_paths);
+        }
+    }
+
     /// Count the total number of paths of each length that are currently stored
     pub fn num_paths_by_len(&self) -> Vec<usize> {
         std::iter::repeat(0)

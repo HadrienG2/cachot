@@ -87,6 +87,25 @@ pub fn search_best_path(
         }
     }
 
+    // We stop exploring paths when their cumulative cache cost has risen too
+    // too far above the best cumulative cache cost that was observed so far, as
+    // it's unlikely that they will outperform the best path that way.
+    let should_prune_path = |curr_path_len: usize,
+                             cost_so_far: cache::Cost,
+                             best_cumulative_cost: &[cache::Cost],
+                             last_cost_record: cache::Cost|
+     -> bool {
+        let best_current_cost = best_cumulative_cost[curr_path_len - 1];
+        let should_prune = cost_so_far > (best_current_cost + tolerance).min(last_cost_record);
+        if should_prune && BRUTE_FORCE_DEBUG_LEVEL >= 4 {
+            println!(
+                "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
+                curr_path_len, path_length
+            );
+        }
+        should_prune
+    };
+
     // Next we iterate as long as we have incomplete paths by taking the most
     // promising path so far, considering all the next steps that can be taken
     // on that path, and pushing any further incomplete path that this creates
@@ -114,20 +133,6 @@ pub fn search_best_path(
             }
             path_display.push_str("START");
             println!("    - Currently on partial path {}", path_display);
-        }
-
-        // Ignore that path if we found another solution which is so good that
-        // it's not worth exploring anymore.
-        let best_current_cost = best_cumulative_cost[partial_path.len() - 1];
-        if partial_path.cost_so_far() > (best_current_cost + tolerance).min(last_cost_record) {
-            if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                println!(
-                    "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
-                    partial_path.len(),
-                    path_length
-                );
-            }
-            continue;
         }
 
         // Enumerate all possible next points, the constraints on them being...
@@ -168,15 +173,12 @@ pub fn search_best_path(
                 // Does it seem worthwhile to try to go there?
                 let next_step_eval = partial_path.evaluate_next_step(&cache_model, &next_step);
                 let next_cost = next_step_eval.next_cost;
-                let best_next_cost = best_cumulative_cost[partial_path.len()];
-                if next_cost > (best_next_cost + tolerance).min(last_cost_record) {
-                    if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                        println!(
-                        "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
-                        partial_path.len() + 1,
-                        path_length
-                    );
-                    }
+                if should_prune_path(
+                    partial_path.len() + 1,
+                    next_cost,
+                    best_cumulative_cost,
+                    last_cost_record,
+                ) {
                     continue;
                 }
 
@@ -187,7 +189,8 @@ pub fn search_best_path(
                         || (next_cost == last_cost_record
                             && partial_path.extra_distance() < *best_extra_distance)
                     {
-                        // If so, materialize the path into a vector
+                        // If so, materialize the path into a vector and update
+                        // best cumulative cost figure of merit.
                         let mut final_path =
                             vec![FeedPair::default(); path_length].into_boxed_slice();
                         final_path[path_length - 1] = next_step_eval.next_step;
@@ -221,13 +224,32 @@ pub fn search_best_path(
                             println!("    - Path and cumulative cost was {:?}", path_cost);
                         }
 
-                        // Reset the watchdog timer
-                        progress_monitor.reset_watchdog();
+                        // If a cache cost record has been achieved, prune stored
+                        // paths which are no longer worthwhile according to the
+                        // new best cumulative cost.
+                        if next_cost < last_cost_record {
+                            if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
+                                println!(
+                                    "    - Pruning paths which are no longer considered viable..."
+                                );
+                            }
+                            priorized_partial_paths.prune(|path| {
+                                should_prune_path(
+                                    path.len(),
+                                    path.cost_so_far(),
+                                    best_cumulative_cost,
+                                    next_cost,
+                                )
+                            });
+                        }
 
-                        // Now record that path and look for a better one
+                        // Update best path tracking variables
                         best_path = Some(final_path);
                         *best_extra_distance = partial_path.extra_distance();
                         last_cost_record = next_cost;
+
+                        // Reset the watchdog timer
+                        progress_monitor.reset_watchdog();
                     }
                     continue;
                 }
