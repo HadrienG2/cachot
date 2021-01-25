@@ -29,11 +29,10 @@ pub const L3_MISS_COST: Cost = 60.0;
 /// loaded cache entries before loading new ones.
 ///
 /// The current cost is tuned such that the algorithm is wary of introducing a
-/// new cache entry, but not to the point of not doing so when it can avoid one
-/// cache miss. With a prefactor of 0.25, the algorithm would instead need to be
-/// able to avoid two cache misses before it resorts to this possibility.
+/// new cache entry, but not to the point of not doing so when it can avoid a
+/// cache miss or two that way.
 ///
-pub const NEW_ENTRY_COST: Cost = 0.75 * L1_MISS_COST;
+pub const NEW_ENTRY_COST: Cost = 0.25 * L1_MISS_COST;
 
 /// Minimum cache cost of accessing N entries, in units of L1 cache misses
 pub fn min_cache_cost(num_entries: Entry) -> Cost {
