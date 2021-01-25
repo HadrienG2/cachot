@@ -21,26 +21,42 @@ const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 /// Path which we are in the process of exploring
 #[derive(Clone)]
 pub struct PartialPath {
+    /// Path steps and cumulative cache costs
+    ///
+    /// This is stored as a linked list with node deduplication across paths of
+    /// identical origin in order to save memory capacity and bandwidth that
+    /// would otherwise be spent copying previous path steps for every child of
+    /// a single parent path.
+    ///
+    /// The price to pay, however, is that this linked tree format is
+    /// extraordinarily expensive to access. Therefore, a subset of this list's
+    /// information is duplicated inline below for fast access, so that the list
+    /// only needs to be traversed in the rare event where a path turns out to
+    /// be a new cache cost / extra distance record.
+    //
     // TODO: Consider replacing Rc with something that allows allocation reuse
     path: Rc<PathElems>,
+
+    /// Length of the path in steps
     path_len: usize,
-    visited_pairs: [usize; MAX_PAIR_WORDS],
-    cache_sim: CacheSimulation,
+
+    /// Last path step
+    curr_step: FeedPair,
+
+    /// Total accumulated cache cost
+    curr_cost: cache::Cost,
+
+    /// Deviation of path steps from basic (1, 0) steps
     extra_distance: StepDistance,
+
+    /// Bitmap of feed pairs that we've been through
+    visited_pairs: [usize; MAX_PAIR_WORDS],
+
+    /// Current state of the cache simulation
+    cache_sim: CacheSimulation,
 }
 //
-/// Path elements are stored as a linked list to enable sharing of common nodes.
-///
-/// This should enable tremendous memory savings and faster path forking, both
-/// of which are very important, at the cost of...
-///
-/// - Slowing down path iteration, but outside of debug logging scenarios we
-///   only need that at the end of a path, and we don't reach the end of a path
-///   very often as most paths are discarded due to excessive cost.
-/// - Slowing down path length counting, which is more important. We address
-///   this by double-counting the length so that we don't need to traverse the
-///   list in order to know the length.
-///
+/// Linked list of path steps and cumulative cache costs, see above
 struct PathElems {
     curr_step: FeedPair,
     curr_cost: cache::Cost,
@@ -84,8 +100,9 @@ impl PartialPath {
             curr_cost += cache_sim.simulate_access(&cache_model, feed);
         }
 
+        let curr_step = start;
         let path = Rc::new(PathElems {
-            curr_step: start,
+            curr_step,
             curr_cost,
             prev_steps: None,
         });
@@ -104,6 +121,8 @@ impl PartialPath {
         Self {
             path,
             path_len: 1,
+            curr_step,
+            curr_cost,
             visited_pairs,
             cache_sim,
             extra_distance: 0.0,
@@ -131,7 +150,7 @@ impl PartialPath {
     // NOTE: This operation is hot and must be fast
     //
     pub fn last_step(&self) -> &FeedPair {
-        &self.path.curr_step
+        &self.curr_step
     }
 
     /// Iterate over the path steps and cumulative costs in reverse step order
@@ -163,7 +182,7 @@ impl PartialPath {
     // NOTE: This operation is hot and must be fast
     //
     pub fn cost_so_far(&self) -> cache::Cost {
-        self.path.curr_cost
+        self.curr_cost
     }
 
     /// Given an extra feed pair, tell what the accumulated cache cost would
@@ -228,9 +247,11 @@ impl PartialPath {
         Self {
             path: next_path,
             path_len: self.path_len + 1,
+            curr_step: next_step,
+            curr_cost: next_cost,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
-            extra_distance: self.extra_distance() + (step_length - 1.0),
+            extra_distance: self.extra_distance + (step_length - 1.0),
         }
     }
 }
