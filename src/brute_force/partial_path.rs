@@ -271,11 +271,16 @@ impl PartialPath {
 /// associated with allocating and liberating all those PathElems turned out to
 /// be too great. So we're now reusing allocations instead.
 ///
-pub type PathElemStorage = SlotMap<DefaultKey, PathElem>;
+pub struct PathElemStorage(SlotMap<DefaultKey, PathElem>);
+//
+impl PathElemStorage {
+    pub fn new() -> Self {
+        Self(SlotMap::new())
+    }
+}
 
 /// Reference-counted PartialPath path element
-// FIXME: Shouldn't be pub
-pub struct PathElem {
+struct PathElem {
     /// Number of references to that path element in existence
     ///
     /// This is 1 when a path is created, increases to N when a path is forked
@@ -322,7 +327,7 @@ impl PathLink {
         curr_cost: cache::Cost,
         prev_steps: Option<PathLink>,
     ) -> Self {
-        let key = storage.insert(PathElem {
+        let key = storage.0.insert(PathElem {
             reference_count: 1,
             curr_step,
             curr_cost,
@@ -341,7 +346,7 @@ impl PathLink {
         {
             debug_assert!(!self.disposed);
         }
-        &storage[self.key]
+        &storage.0[self.key]
     }
 
     /// Mutable access to a path element from storage
@@ -350,7 +355,7 @@ impl PathLink {
         {
             debug_assert!(!self.disposed);
         }
-        &mut storage[self.key]
+        &mut storage.0[self.key]
     }
 
     /// Make a new PathLink pointing to the same PathElem
@@ -372,9 +377,9 @@ impl PathLink {
         let path_elem = self.get_mut(storage);
         path_elem.reference_count -= 1;
         if path_elem.reference_count == 0 {
-            let mut prev_steps = path_elem.prev_steps.take();
-            storage.remove(self.key);
-            for prev_steps in prev_steps.as_mut() {
+            let prev_steps = path_elem.prev_steps.take();
+            storage.0.remove(self.key);
+            for mut prev_steps in prev_steps {
                 prev_steps.dispose(storage);
             }
         }
