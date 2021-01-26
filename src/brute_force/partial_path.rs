@@ -342,24 +342,19 @@ impl PathLink {
 
     /// Read-only access to a path element from storage
     fn get<'storage>(&self, storage: &'storage PathElemStorage) -> &'storage PathElem {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.disposed);
-        }
+        self.debug_assert_valid();
         &storage.0[self.key]
     }
 
     /// Mutable access to a path element from storage
     fn get_mut<'storage>(&self, storage: &'storage mut PathElemStorage) -> &'storage mut PathElem {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.disposed);
-        }
+        self.debug_assert_valid();
         &mut storage.0[self.key]
     }
 
     /// Make a new PathLink pointing to the same PathElem
     fn clone(&self, storage: &mut PathElemStorage) -> Self {
+        self.debug_assert_valid();
         self.get_mut(storage).reference_count += 1;
         Self {
             key: self.key,
@@ -370,12 +365,10 @@ impl PathLink {
 
     /// Invalidate a PathLink, possibly disposing of the underlying storage
     fn dispose(&mut self, storage: &mut PathElemStorage) {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.disposed);
-        }
         // Manual tail call optimization of recursive PathLink::dispose()
+        self.debug_assert_valid();
         let mut disposed_key = Some(self.key);
+        self.debug_invalidate();
         while let Some(key) = disposed_key.take() {
             // Reduce refcount of current path element
             let path_elem = &mut storage.0[key];
@@ -385,19 +378,29 @@ impl PathLink {
             if path_elem.reference_count == 0 {
                 // ...prepare to recursively dispose any previous elements...
                 if let Some(prev_link) = path_elem.prev_steps.as_mut() {
+                    prev_link.debug_assert_valid();
                     disposed_key = Some(prev_link.key);
-                    #[cfg(debug_assertions)]
-                    {
-                        prev_link.disposed = true;
-                    }
+                    prev_link.debug_invalidate();
                 }
 
                 // ...and discard current path element
                 storage.0.remove(key);
             }
         }
-        #[cfg(debug_assertions)]
-        {
+    }
+
+    /// In debug mode, make sure that this path link is still valid
+    #[inline(always)]
+    fn debug_assert_valid(&self) {
+        if cfg!(debug_assertions) {
+            debug_assert!(!self.disposed);
+        }
+    }
+
+    /// In debug mode, invalidate this path link
+    #[inline(always)]
+    fn debug_invalidate(&mut self) {
+        if cfg!(debug_assertions) {
             self.disposed = true;
         }
     }
