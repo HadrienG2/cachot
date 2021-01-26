@@ -27,15 +27,15 @@ pub struct PartialPath {
     /// Path steps and cumulative cache costs
     ///
     /// This is stored as a linked list with node deduplication across paths of
-    /// identical origin in order to save memory capacity and bandwidth that
+    /// identical origin, in order to save memory capacity and bandwidth that
     /// would otherwise be spent copying previous path steps for every child of
     /// a single parent path.
     ///
     /// The price to pay, however, is that this linked tree format is
     /// extraordinarily expensive to access. Therefore, a subset of this list's
     /// information is duplicated inline below for fast access, so that the list
-    /// only needs to be traversed in the rare event where a path turns out to
-    /// be a new cache cost / extra distance record.
+    /// only needs to be traversed for debug output and in the rare event where
+    /// a path turns out to beat a new cache cost / extra distance record.
     ///
     path: PathLink,
 
