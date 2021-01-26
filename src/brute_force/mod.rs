@@ -136,23 +136,19 @@ pub fn search_best_path(
         }
 
         // Enumerate all possible next points, the constraints on them being...
+        // - Next point should be within max_radius of last point
+        // - Next point should be within the iteration domain (x and y between
+        //   0 and num_feeds and y >= x).
         // - Next point should not be any point we've previously been through
         // - The total path cache cost is not allowed to go above the best path
         //   cache cost that we've observed so far (otherwise that path is less
         //   interesting than the best path).
-        for next_x in 0..num_feeds {
-            for next_y in next_x..num_feeds {
+        let [curr_x, curr_y] = partial_path.last_step();
+        for next_x in curr_x.saturating_sub(max_radius)..(curr_x + max_radius + 1).min(num_feeds) {
+            for next_y in curr_y.saturating_sub(max_radius).max(next_x)
+                ..(curr_y + max_radius + 1).min(num_feeds)
+            {
                 let next_step = [next_x, next_y];
-
-                // Trim candidates according to the max_radius criterion
-                let &[curr_x, curr_y] = partial_path.last_step();
-                let radius = (next_x as isize - curr_x as isize)
-                    .abs()
-                    .max((next_y as isize - curr_y as isize).abs())
-                    as FeedIdx;
-                if radius > max_radius {
-                    continue;
-                }
 
                 // Log which neighbor we're looking at in verbose mode
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
