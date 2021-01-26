@@ -28,6 +28,9 @@ impl PathElemStorage {
 /// Behaves like an Rc, but uses PathElemStorage as a backing store instead of
 /// the system memory allocator.
 ///
+/// You must call dispose() before dropping this struct, otherwise you'll have a
+/// memory leak on your hand. This is checked in debug build.
+///
 pub struct PathLink {
     /// Key of the target PathElem in the underlying PathElemStorage
     key: DefaultKey,
@@ -77,6 +80,20 @@ impl PathLink {
     pub fn clone(&self, storage: &mut PathElemStorage) -> Self {
         self.debug_assert_valid();
         self.get_mut(storage).reference_count += 1;
+        // This is safe as the refcount has been incremented above
+        unsafe { self.weak_clone() }
+    }
+
+    /// Make a new PathLink pointing to the same PathElem without incrementing
+    /// the underlying reference count
+    ///
+    /// Using this PathLink after all other "strong" PathLinks have been
+    /// destroyed may trigger undefined behavior in a future version of this
+    /// code, if we need to switch to unchecked storage indexing, so it is an
+    /// unsafe operation.
+    ///
+    pub unsafe fn weak_clone(&self) -> Self {
+        self.debug_assert_valid();
         Self {
             key: self.key,
             #[cfg(debug_assertions)]
@@ -113,7 +130,8 @@ impl PathLink {
     /// In debug mode, make sure that this path link is still valid
     #[inline(always)]
     fn debug_assert_valid(&self) {
-        if cfg!(debug_assertions) {
+        #[cfg(debug_assertions)]
+        {
             debug_assert!(!self.disposed);
         }
     }
@@ -121,7 +139,8 @@ impl PathLink {
     /// In debug mode, invalidate this path link
     #[inline(always)]
     fn debug_invalidate(&mut self) {
-        if cfg!(debug_assertions) {
+        #[cfg(debug_assertions)]
+        {
             self.disposed = true;
         }
     }

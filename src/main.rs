@@ -44,6 +44,8 @@ fn main() {
         /* // TODO: What would happen with more feeds?
         16 */
     ];
+    assert!(*TESTED_NUM_FEEDS.iter().max().unwrap() <= MAX_FEEDS);
+
     let mut debug_level = 2;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
         println!("=== Testing with {} feeds ===\n", num_feeds);

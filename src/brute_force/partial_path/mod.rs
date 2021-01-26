@@ -10,6 +10,10 @@ use crate::{
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
 use history::PathLink;
+use std::{
+    cell::{Ref, RefCell},
+    ops::Deref,
+};
 
 /// Machine word size in bits
 const WORD_SIZE: u32 = (std::mem::size_of::<usize>() * 8) as u32;
@@ -23,7 +27,143 @@ const fn div_round_up(num: usize, denom: usize) -> usize {
 const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
 /// Path which we are in the process of exploring
-pub struct PartialPath {
+pub struct PartialPath<'storage> {
+    /// Inner data
+    data: PartialPathData,
+
+    /// Underlying cache model
+    cache_model: &'storage CacheModel,
+
+    /// Path element storage
+    ///
+    /// This must be RefCell'd because we want to mutably access the storage on
+    /// Drop (to auto-delete path elements), and still have mutable access to
+    /// the storage for other purposes like creating new sub-paths.
+    ///
+    path_elem_storage: &'storage RefCell<PathElemStorage>,
+}
+//
+impl<'storage> PartialPath<'storage> {
+    /// Start a path
+    pub fn new(
+        path_elem_storage: &'storage RefCell<PathElemStorage>,
+        cache_model: &'storage CacheModel,
+        start_step: FeedPair,
+    ) -> Self {
+        Self {
+            data: PartialPathData::new(
+                &mut *path_elem_storage.borrow_mut(),
+                cache_model,
+                start_step,
+            ),
+            cache_model,
+            path_elem_storage,
+        }
+    }
+
+    /// Iterate over the path steps and cumulative costs in reverse step order
+    pub fn iter_rev(&'storage self) -> impl Iterator<Item = (FeedPair, cache::Cost)> + 'storage {
+        self.data.iter_rev(self.path_elem_storage.borrow())
+    }
+
+    /// Given an extra feed pair, tell what the accumulated cache cost would
+    /// become if the path was completed by this pair, and what the cache
+    /// entries would then be.
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
+    pub fn evaluate_next_step(&self, next_step: &FeedPair) -> NextStepEvaluation {
+        self.data.evaluate_next_step(self.cache_model, next_step)
+    }
+
+    /// Create a new partial path which follows all the steps from this one,
+    /// plus an extra step for which the new cache cost and updated cache model
+    /// are provided.
+    pub fn commit_next_step(&self, next_step_eval: NextStepEvaluation) -> Self {
+        Self {
+            data: self
+                .data
+                .commit_next_step(&mut *self.path_elem_storage.borrow_mut(), next_step_eval),
+            cache_model: self.cache_model,
+            path_elem_storage: self.path_elem_storage,
+        }
+    }
+
+    /// Compose a partial path's data and its storage into a full PartialPath
+    pub(super) fn wrap(
+        data: PartialPathData,
+        cache_model: &'storage CacheModel,
+        path_elem_storage: &'storage RefCell<PathElemStorage>,
+    ) -> Self {
+        Self {
+            data,
+            cache_model,
+            path_elem_storage,
+        }
+    }
+
+    /// Get back the inner PartialPathData, typically for container insertion
+    pub(super) fn unwrap(self) -> PartialPathData {
+        // So, I'm sure there's a cleaner way to do this, but I haven't found
+        // it yet. Basically, the issue here is that...
+        //
+        // - I cannot move out of the wrapper because it implements Drop.
+        // - I cannot remove the Drop impl because it is very much critical to
+        //   the wrapper's functionality.
+        // - I very much want a way to move data out of the wrapper when I'm
+        //   going to store said data into a container.
+        // - I cannot use Option because that would have runtime overhead which
+        //   I very much do not want in this hot part of the code.
+        // - I'm convinced that it is actually safe to move out of this type as
+        //   long as I inhibit its destructor with `mem::forget()`
+        //
+        // Therefore, I'm resorting to forcing a move behind the borrow
+        // checker's back, under the assumption that this is safe because...
+        //
+        // 1. PartialPathData is a trivial type, almost just a bunch of numbers,
+        //    it does not contain data which is unsafe to copy like &mut refs.
+        // 2. Double dropping will not occur because I'm forgetting `self`
+        //    immediately after performing the read, with no possibility of
+        //    panicking inbetween these two events.
+        //
+        let data_ptr = &self.data as *const PartialPathData;
+        let data = unsafe { data_ptr.read() };
+        std::mem::forget(self);
+        data
+    }
+}
+//
+impl Deref for PartialPath<'_> {
+    type Target = PartialPathData;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+//
+impl Drop for PartialPath<'_> {
+    fn drop(&mut self) {
+        self.data
+            .drop_elems(&mut *self.path_elem_storage.borrow_mut())
+    }
+}
+
+/// Data about a path which we are in the process of exploring
+///
+/// This struct tries to be as compact as possible (since it pretty much
+/// single-handedly dominates our memory capacity and bandwidth usage), but as a
+/// result it is incomplete without secondary information that is common to all
+/// partial paths, namely the location of the PathElemStorage container where
+/// all path elements are stored, and the underlying CPU cache model.
+///
+/// This notably means that it cannot follow RAII idioms and must follow a
+/// custom destruction protocol, which is error-prone. Therefore, manipulating
+/// this struct directly is not recommended, unless you are building a path
+/// container. You should instead use the `PartialPath` convenience wrapper.
+///
+// SAFETY: PartialPathData must not be made to contain types which are unsafe
+//         to copy such as &mut references.
+//
+pub struct PartialPathData {
     /// Path steps and cumulative cache costs
     ///
     /// This is stored as a linked list with node deduplication across paths of
@@ -61,7 +201,7 @@ pub struct PartialPath {
 /// Total distance that was "walked" across a path step
 pub type StepDistance = f32;
 //
-impl PartialPath {
+impl PartialPathData {
     /// Index of a certain coordinate in the visited_pairs bitvec
     //
     // NOTE: This operation is super hot and must be very fast
@@ -88,7 +228,7 @@ impl PartialPath {
     //
     // NOTE: This operation is very rare and can be slow
     //
-    pub fn new(
+    fn new(
         path_elem_storage: &mut PathElemStorage,
         cache_model: &CacheModel,
         start_step: FeedPair,
@@ -152,14 +292,22 @@ impl PartialPath {
     // NOTE: This operation can be slow, it is only called when a better path
     //       has been found (very rare) or when displaying debug output.
     //
-    pub fn iter_rev<'a>(
-        &'a self,
-        path_elem_storage: &'a PathElemStorage,
-    ) -> impl Iterator<Item = (FeedPair, cache::Cost)> + 'a {
-        let mut next_node = Some(&self.path);
+    fn iter_rev<'self_, 'storage: 'self_>(
+        &'self_ self,
+        path_elem_storage: Ref<'storage, PathElemStorage>,
+    ) -> impl Iterator<Item = (FeedPair, cache::Cost)> + 'self_ {
+        // This weak clone is safe because per the above function signature, the
+        // output iterator borrows the underlying PartialPathData, which
+        // prevents the underlying PathLink from being disposed of.
+        let mut next_node = Some(unsafe { self.path.weak_clone() });
         std::iter::from_fn(move || {
-            let node = next_node?.get(path_elem_storage);
-            next_node = node.prev_steps.as_ref();
+            let node = next_node.take()?.get(&*path_elem_storage);
+            // This weak clone is safe because the PathLink that we are cloning
+            // is protected by the PathLink that we locked above.
+            next_node = node
+                .prev_steps
+                .as_ref()
+                .map(|link| unsafe { link.weak_clone() });
             Some((node.curr_step, node.curr_cost))
         })
     }
@@ -188,7 +336,7 @@ impl PartialPath {
     //
     // NOTE: This operation is super hot and must be very fast
     //
-    pub fn evaluate_next_step(
+    fn evaluate_next_step(
         &self,
         cache_model: &CacheModel,
         &next_step: &FeedPair,
@@ -212,7 +360,7 @@ impl PartialPath {
     //
     // NOTE: This operation is relatively hot and must be quite fast
     //
-    pub fn commit_next_step(
+    fn commit_next_step(
         &self,
         path_elem_storage: &mut PathElemStorage,
         next_step_eval: NextStepEvaluation,
@@ -254,12 +402,11 @@ impl PartialPath {
     }
 
     /// Cleanly dispose of the path's elements
-    //
-    // FIXME: Abstract this away by providing an abstraction that combines a
-    //        PartialPath and an &mut PathElemStorage, so that we can properly
-    //        implement Drop.
-    //
-    pub(crate) fn drop_elems(&mut self, path_elem_storage: &mut PathElemStorage) {
+    ///
+    /// This should be called before the PartialPathData is dropped. PartialPath
+    /// will take care of this for you automatically.
+    ///
+    fn drop_elems(&mut self, path_elem_storage: &mut PathElemStorage) {
         self.path.dispose(path_elem_storage);
     }
 }
