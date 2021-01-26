@@ -87,23 +87,22 @@ impl PartialPath {
     pub fn new(
         path_elem_storage: &mut PathElemStorage,
         cache_model: &CacheModel,
-        start: FeedPair,
+        start_step: FeedPair,
     ) -> Self {
         let mut cache_sim = cache_model.start_simulation();
         let mut curr_cost = 0.0;
-        for &feed in start.iter() {
+        for &feed in start_step.iter() {
             curr_cost += cache_sim.simulate_access(&cache_model, feed);
         }
 
-        let curr_step = start;
-        let path = PathLink::new(path_elem_storage, curr_step, curr_cost, None);
+        let path = PathLink::new(path_elem_storage, start_step, curr_cost, None);
 
         let mut visited_pairs = [0; MAX_PAIR_WORDS];
         for word in 0..MAX_PAIR_WORDS {
             let mut current_word = 0;
             for bit in (0..WORD_SIZE).rev() {
                 let [x, y] = Self::bit_index_to_coord(word, bit);
-                let visited = (y < x) || ([x, y] == start);
+                let visited = [x, y] == start_step;
                 current_word = (current_word << 1) | (visited as usize);
             }
             visited_pairs[word] = current_word;
@@ -112,7 +111,7 @@ impl PartialPath {
         Self {
             path,
             path_len: 1,
-            curr_step,
+            curr_step: start_step,
             curr_cost,
             visited_pairs,
             cache_sim,
@@ -274,6 +273,7 @@ impl PartialPath {
 pub struct PathElemStorage(SlotMap<DefaultKey, PathElem>);
 //
 impl PathElemStorage {
+    /// Set up storage for path elements
     pub fn new() -> Self {
         Self(SlotMap::new())
     }

@@ -108,7 +108,7 @@ pub struct CacheSimulation {
 //
 /// Clock type should be able to hold the max cache timestamp, which is twice
 /// the number of pairs, which itself is MAX_FEEDS * (MAX_FEEDS + 1) / 2
-type CacheClock = u16;
+type CacheClock = u8; /* u16 for 16 feeds */
 //
 impl CacheSimulation {
     /// Set up some cache entries and a clock
