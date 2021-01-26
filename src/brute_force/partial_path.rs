@@ -374,13 +374,26 @@ impl PathLink {
         {
             debug_assert!(!self.disposed);
         }
-        let path_elem = self.get_mut(storage);
-        path_elem.reference_count -= 1;
-        if path_elem.reference_count == 0 {
-            let prev_steps = path_elem.prev_steps.take();
-            storage.0.remove(self.key);
-            for mut prev_steps in prev_steps {
-                prev_steps.dispose(storage);
+        // Manual tail call optimization of recursive PathLink::dispose()
+        let mut disposed_key = Some(self.key);
+        while let Some(key) = disposed_key.take() {
+            // Reduce refcount of current path element
+            let path_elem = &mut storage.0[key];
+            path_elem.reference_count -= 1;
+
+            // If no one uses that path element anymore...
+            if path_elem.reference_count == 0 {
+                // ...prepare to recursively dispose any previous elements...
+                if let Some(prev_link) = path_elem.prev_steps.as_mut() {
+                    disposed_key = Some(prev_link.key);
+                    #[cfg(debug_assertions)]
+                    {
+                        prev_link.disposed = true;
+                    }
+                }
+
+                // ...and discard current path element
+                storage.0.remove(key);
             }
         }
         #[cfg(debug_assertions)]
