@@ -166,14 +166,7 @@ impl PriorizedPartialPaths {
             .pop()
             .expect("Should work after above loop");
         debug_assert!(self.path_storage.contains_key(priorized_path.slot));
-        if !self.path_storage.contains_key(priorized_path.slot) {
-            unsafe { core::hint::unreachable_unchecked() };
-        }
-        Some(
-            self.path_storage
-                .remove(priorized_path.slot)
-                .expect("path_storage became inconsistent with priorized paths"),
-        )
+        Some(unsafe { self.path_storage.remove_unchecked(priorized_path.slot) })
     }
 
     /// Drop all stored paths which don't match a certain predicate
