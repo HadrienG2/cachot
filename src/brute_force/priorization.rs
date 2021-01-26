@@ -16,7 +16,7 @@
 //! we are in the process of exploring in a data structure which allows
 //! priorizing the most promising tracks over others.
 
-use super::{PartialPath, StepDistance};
+use super::{PartialPath, PathElemStorage, StepDistance};
 use crate::cache;
 use rand::prelude::*;
 use std::{cmp::Ordering, collections::BinaryHeap};
@@ -63,8 +63,11 @@ impl PriorizedPartialPaths {
     pub fn new(full_path_len: usize) -> Self {
         let max_path_len = full_path_len - 1;
         let high_water_mark = Self::high_water_mark(max_path_len);
+        let paths_by_len = std::iter::from_fn(|| Some(BinaryHeap::with_capacity(high_water_mark)))
+            .take(max_path_len)
+            .collect();
         Self {
-            paths_by_len: vec![BinaryHeap::with_capacity(high_water_mark); max_path_len],
+            paths_by_len,
             min_path_len: 1,
             curr_path_len: 0,
             high_water_mark,
@@ -160,11 +163,17 @@ impl PriorizedPartialPaths {
     /// This is very expensive, but only meant to be done when a new cache cost
     /// record is achieved, which doesn't happen very often.
     ///
-    pub fn prune(&mut self, mut should_prune: impl FnMut(&PartialPath) -> bool) {
+    pub fn prune(
+        &mut self,
+        path_elem_storage: &mut PathElemStorage,
+        mut should_prune: impl FnMut(&PartialPath) -> bool,
+    ) {
         let mut new_paths = BinaryHeap::with_capacity(self.high_water_mark);
         for old_paths in &mut self.paths_by_len {
-            for path in old_paths.drain() {
-                if !should_prune(&path.0) {
+            for mut path in old_paths.drain() {
+                if should_prune(&path.0) {
+                    path.0.drop_elems(path_elem_storage);
+                } else {
                     new_paths.push(path);
                 }
             }
@@ -187,7 +196,6 @@ impl PriorizedPartialPaths {
     }
 }
 //
-#[derive(Clone)]
 struct PriorizedPath(PartialPath);
 //
 /// Priorize cache cost, then given equal cache cost priorize simplest path

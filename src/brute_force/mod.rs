@@ -4,7 +4,7 @@
 mod partial_path;
 mod priorization;
 
-pub use self::partial_path::{PartialPath, StepDistance};
+pub use self::partial_path::{PartialPath, PathElemStorage, StepDistance};
 
 use self::priorization::PriorizedPartialPaths;
 use crate::{
@@ -80,10 +80,15 @@ pub fn search_best_path(
     //   from the symmetric point (num_points-y, num_points-x), so we don't need
     //   to explore both of these starting points to find the optimal solution.
     //
+    let mut path_elems_storage = PathElemStorage::new();
     let mut priorized_partial_paths = PriorizedPartialPaths::new(path_length);
     for start_y in 0..num_feeds {
         for start_x in 0..=start_y.min(num_feeds - start_y - 1) {
-            priorized_partial_paths.push(PartialPath::new(&cache_model, [start_x, start_y]));
+            priorized_partial_paths.push(PartialPath::new(
+                &mut path_elems_storage,
+                &cache_model,
+                [start_x, start_y],
+            ));
         }
     }
 
@@ -113,7 +118,7 @@ pub fn search_best_path(
     let mut best_path = None;
     let mut rng = rand::thread_rng();
     let mut progress_monitor = ProgressMonitor::new(path_length, &priorized_partial_paths);
-    while let Some(partial_path) = priorized_partial_paths.pop(&mut rng) {
+    while let Some(mut partial_path) = priorized_partial_paths.pop(&mut rng) {
         // Check the watchdog timer
         if progress_monitor.watchdog_timer() > timeout {
             if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
@@ -128,7 +133,7 @@ pub fn search_best_path(
         // Indicate which partial path was chosen
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             let mut path_display = String::new();
-            for step_and_cost in partial_path.iter_rev() {
+            for step_and_cost in partial_path.iter_rev(&path_elems_storage) {
                 write!(path_display, "{:?} <- ", step_and_cost).unwrap();
             }
             path_display.push_str("START");
@@ -189,10 +194,11 @@ pub fn search_best_path(
                         // best cumulative cost figure of merit.
                         let mut final_path =
                             vec![FeedPair::default(); path_length].into_boxed_slice();
-                        final_path[path_length - 1] = next_step_eval.next_step;
+                        final_path[path_length - 1] = next_step;
                         best_cumulative_cost[path_length - 1] = next_step_eval.next_cost;
-                        for (i, (step, cost)) in
-                            (0..partial_path.len()).rev().zip(partial_path.iter_rev())
+                        for (i, (step, cost)) in (0..partial_path.len())
+                            .rev()
+                            .zip(partial_path.iter_rev(&path_elems_storage))
                         {
                             final_path[i] = step;
                             best_cumulative_cost[i] = cost;
@@ -229,7 +235,7 @@ pub fn search_best_path(
                                     "    - Pruning paths which are no longer considered viable..."
                                 );
                             }
-                            priorized_partial_paths.prune(|path| {
+                            priorized_partial_paths.prune(&mut path_elems_storage, |path| {
                                 should_prune_path(
                                     path.len(),
                                     path.cost_so_far(),
@@ -254,12 +260,14 @@ pub fn search_best_path(
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
                     println!("      * That seems reasonable, we'll explore that path further...");
                 }
-                priorized_partial_paths.push(partial_path.commit_next_step(next_step_eval));
+                priorized_partial_paths
+                    .push(partial_path.commit_next_step(&mut path_elems_storage, next_step_eval));
             }
         }
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             println!("    - Done exploring possibilities from current path");
         }
+        partial_path.drop_elems(&mut path_elems_storage);
     }
 
     // Return the optimal path, if any, along with its cache cost

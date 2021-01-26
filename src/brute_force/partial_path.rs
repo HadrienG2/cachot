@@ -5,7 +5,7 @@ use crate::{
     cache::{self, CacheModel, CacheSimulation},
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
-use std::rc::Rc;
+use slotmap::{DefaultKey, SlotMap};
 
 /// Machine word size in bits
 const WORD_SIZE: u32 = (std::mem::size_of::<usize>() * 8) as u32;
@@ -19,7 +19,6 @@ const fn div_round_up(num: usize, denom: usize) -> usize {
 const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
 /// Path which we are in the process of exploring
-#[derive(Clone)]
 pub struct PartialPath {
     /// Path steps and cumulative cache costs
     ///
@@ -33,9 +32,8 @@ pub struct PartialPath {
     /// information is duplicated inline below for fast access, so that the list
     /// only needs to be traversed in the rare event where a path turns out to
     /// be a new cache cost / extra distance record.
-    //
-    // TODO: Consider replacing Rc with something that allows allocation reuse
-    path: Rc<PathElems>,
+    ///
+    path: PathLink,
 
     /// Length of the path in steps
     path_len: usize,
@@ -43,7 +41,7 @@ pub struct PartialPath {
     /// Last path step
     curr_step: FeedPair,
 
-    /// Total accumulated cache cost
+    /// Total cache cost, accumulated over previous path steps
     curr_cost: cache::Cost,
 
     /// Deviation of path steps from basic (1, 0) steps
@@ -54,13 +52,6 @@ pub struct PartialPath {
 
     /// Current state of the cache simulation
     cache_sim: CacheSimulation,
-}
-//
-/// Linked list of path steps and cumulative cache costs, see above
-struct PathElems {
-    curr_step: FeedPair,
-    curr_cost: cache::Cost,
-    prev_steps: Option<Rc<PathElems>>,
 }
 //
 /// Total distance that was "walked" across a path step
@@ -93,7 +84,11 @@ impl PartialPath {
     //
     // NOTE: This operation is very rare and can be slow
     //
-    pub fn new(cache_model: &CacheModel, start: FeedPair) -> Self {
+    pub fn new(
+        path_elem_storage: &mut PathElemStorage,
+        cache_model: &CacheModel,
+        start: FeedPair,
+    ) -> Self {
         let mut cache_sim = cache_model.start_simulation();
         let mut curr_cost = 0.0;
         for &feed in start.iter() {
@@ -101,11 +96,7 @@ impl PartialPath {
         }
 
         let curr_step = start;
-        let path = Rc::new(PathElems {
-            curr_step,
-            curr_cost,
-            prev_steps: None,
-        });
+        let path = PathLink::new(path_elem_storage, curr_step, curr_cost, None);
 
         let mut visited_pairs = [0; MAX_PAIR_WORDS];
         for word in 0..MAX_PAIR_WORDS {
@@ -158,10 +149,13 @@ impl PartialPath {
     // NOTE: This operation can be slow, it is only called when a better path
     //       has been found (very rare) or when displaying debug output.
     //
-    pub fn iter_rev(&self) -> impl Iterator<Item = (FeedPair, cache::Cost)> + '_ {
+    pub fn iter_rev<'a>(
+        &'a self,
+        path_elem_storage: &'a PathElemStorage,
+    ) -> impl Iterator<Item = (FeedPair, cache::Cost)> + 'a {
         let mut next_node = Some(&self.path);
         std::iter::from_fn(move || {
-            let node = next_node?;
+            let node = next_node?.get(path_elem_storage);
             next_node = node.prev_steps.as_ref();
             Some((node.curr_step, node.curr_cost))
         })
@@ -215,18 +209,19 @@ impl PartialPath {
     //
     // NOTE: This operation is relatively hot and must be quite fast
     //
-    pub fn commit_next_step(&self, next_step_eval: NextStepEvaluation) -> Self {
+    pub fn commit_next_step(
+        &self,
+        path_elem_storage: &mut PathElemStorage,
+        next_step_eval: NextStepEvaluation,
+    ) -> Self {
         let NextStepEvaluation {
             next_step,
             next_cost,
             next_cache,
         } = next_step_eval;
 
-        let next_path = Rc::new(PathElems {
-            curr_step: next_step,
-            curr_cost: next_cost,
-            prev_steps: Some(self.path.clone()),
-        });
+        let prev_steps = Some(self.path.clone(path_elem_storage));
+        let next_path = PathLink::new(path_elem_storage, next_step, next_cost, prev_steps);
 
         let mut next_visited_pairs = self.visited_pairs.clone();
         let (word, bit) = Self::coord_to_bit_index(&next_step);
@@ -254,11 +249,160 @@ impl PartialPath {
             extra_distance: self.extra_distance + (step_length - 1.0),
         }
     }
+
+    /// Cleanly dispose of the path's elements
+    //
+    // FIXME: Abstract this away by providing an abstraction that combines a
+    //        PartialPath and an &mut PathElemStorage, so that we can properly
+    //        implement Drop.
+    //
+    pub(crate) fn drop_elems(&mut self, path_elem_storage: &mut PathElemStorage) {
+        self.path.dispose(path_elem_storage);
+    }
+}
+
+/// Storage for PartialPath path elements
+///
+/// PartialPath steps are stored as a linked list, with node deduplication so
+/// that when a path forks into multiple sub-paths, we don't need to make
+/// multiple copies of the parent path (which costs RAM capacity and bandwidth).
+///
+/// Originally, this list was stored using Rc<PathElem>, but the overhead
+/// associated with allocating and liberating all those PathElems turned out to
+/// be too great. So we're now reusing allocations instead.
+///
+pub type PathElemStorage = SlotMap<DefaultKey, PathElem>;
+
+/// Reference-counted PartialPath path element
+// FIXME: Shouldn't be pub
+pub struct PathElem {
+    /// Number of references to that path element in existence
+    ///
+    /// This is 1 when a path is created, increases to N when a path is forked
+    /// into sub-paths, and once it drops to 0, all sub-paths have been fully
+    /// explored, and this path an all of its parent paths can be disposed of.
+    ///
+    reference_count: u8,
+
+    /// Last step that was taken on that path
+    curr_step: FeedPair,
+
+    /// Total cache cost after taking this step
+    curr_cost: cache::Cost,
+
+    /// Previous steps that were taken on this path
+    prev_steps: Option<PathLink>,
+}
+//
+#[cfg(debug_assertions)]
+impl Drop for PathElem {
+    fn drop(&mut self) {
+        assert_eq!(
+            self.reference_count, 0,
+            "PathElem dropped while references still existed (according to refcount)"
+        );
+    }
+}
+
+/// Link to a PathElem in PathElemStorage
+struct PathLink {
+    /// Key of the target PathElem in the underlying PathElemStorage
+    key: DefaultKey,
+
+    /// In debug mode, we make sure that PathElems are correctly disposed of
+    #[cfg(debug_assertions)]
+    disposed: bool,
+}
+//
+impl PathLink {
+    /// Record a new path element
+    fn new(
+        storage: &mut PathElemStorage,
+        curr_step: FeedPair,
+        curr_cost: cache::Cost,
+        prev_steps: Option<PathLink>,
+    ) -> Self {
+        let key = storage.insert(PathElem {
+            reference_count: 1,
+            curr_step,
+            curr_cost,
+            prev_steps,
+        });
+        Self {
+            key,
+            #[cfg(debug_assertions)]
+            disposed: false,
+        }
+    }
+
+    /// Read-only access to a path element from storage
+    fn get<'storage>(&self, storage: &'storage PathElemStorage) -> &'storage PathElem {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!self.disposed);
+        }
+        &storage[self.key]
+    }
+
+    /// Mutable access to a path element from storage
+    fn get_mut<'storage>(&self, storage: &'storage mut PathElemStorage) -> &'storage mut PathElem {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!self.disposed);
+        }
+        &mut storage[self.key]
+    }
+
+    /// Make a new PathLink pointing to the same PathElem
+    fn clone(&self, storage: &mut PathElemStorage) -> Self {
+        self.get_mut(storage).reference_count += 1;
+        Self {
+            key: self.key,
+            #[cfg(debug_assertions)]
+            disposed: false,
+        }
+    }
+
+    /// Invalidate a PathLink, possibly disposing of the underlying storage
+    fn dispose(&mut self, storage: &mut PathElemStorage) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!self.disposed);
+        }
+        let path_elem = self.get_mut(storage);
+        path_elem.reference_count -= 1;
+        if path_elem.reference_count == 0 {
+            let mut prev_steps = path_elem.prev_steps.take();
+            storage.remove(self.key);
+            for prev_steps in prev_steps.as_mut() {
+                prev_steps.dispose(storage);
+            }
+        }
+        #[cfg(debug_assertions)]
+        {
+            self.disposed = true;
+        }
+    }
+}
+//
+#[cfg(debug_assertions)]
+impl Drop for PathLink {
+    fn drop(&mut self) {
+        assert!(
+            self.disposed,
+            "PathLink dropped without cleaning up the underlying PathElem"
+        );
+    }
 }
 
 /// Result of `PartialPath::evaluate_next_step()`
 pub struct NextStepEvaluation {
-    pub next_step: FeedPair,
+    /// Next step to be taken (repeated to simplify commit_next_step signature)
+    next_step: FeedPair,
+
+    /// Total cache cost after taking this step
     pub next_cost: cache::Cost,
+
+    /// Cache state after taking this step
     next_cache: CacheSimulation,
 }

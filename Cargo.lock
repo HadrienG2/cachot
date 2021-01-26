@@ -6,6 +6,7 @@ version = "0.1.0"
 dependencies = [
  "genawaiter",
  "rand",
+ "slotmap",
  "space-filler",
 ]
 
@@ -156,6 +157,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3190ef7066a446f2e7f42e239d161e905420ccab01eb967c9eb27d21b2322a73"
 dependencies = [
  "rand_core",
+]
+
+[[package]]
+name = "slotmap"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab3003725ae562cf995f3dc82bb99e70926e09000396816765bb6d7adbe740b1"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]
