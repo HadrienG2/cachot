@@ -279,36 +279,6 @@ impl PathElemStorage {
     }
 }
 
-/// Reference-counted PartialPath path element
-struct PathElem {
-    /// Number of references to that path element in existence
-    ///
-    /// This is 1 when a path is created, increases to N when a path is forked
-    /// into sub-paths, and once it drops to 0, all sub-paths have been fully
-    /// explored, and this path an all of its parent paths can be disposed of.
-    ///
-    reference_count: u8,
-
-    /// Last step that was taken on that path
-    curr_step: FeedPair,
-
-    /// Total cache cost after taking this step
-    curr_cost: cache::Cost,
-
-    /// Previous steps that were taken on this path
-    prev_steps: Option<PathLink>,
-}
-//
-#[cfg(debug_assertions)]
-impl Drop for PathElem {
-    fn drop(&mut self) {
-        assert_eq!(
-            self.reference_count, 0,
-            "PathElem dropped while still referenced (according to refcount)"
-        );
-    }
-}
-
 /// Link to a PathElem in PathElemStorage
 struct PathLink {
     /// Key of the target PathElem in the underlying PathElemStorage
@@ -415,6 +385,36 @@ impl Drop for PathLink {
         assert!(
             self.disposed,
             "PathLink dropped without having been properly disposed of"
+        );
+    }
+}
+
+/// Reference-counted PartialPath path element
+struct PathElem {
+    /// Number of references to that path element in existence
+    ///
+    /// This is 1 when a path is created, increases to N when a path is forked
+    /// into sub-paths, and once it drops to 0, all sub-paths have been fully
+    /// explored, and this path an all of its parent paths can be disposed of.
+    ///
+    reference_count: u8,
+
+    /// Last step that was taken on that path
+    curr_step: FeedPair,
+
+    /// Total cache cost after taking this step
+    curr_cost: cache::Cost,
+
+    /// Previous steps that were taken on this path
+    prev_steps: Option<PathLink>,
+}
+//
+#[cfg(debug_assertions)]
+impl Drop for PathElem {
+    fn drop(&mut self) {
+        assert_eq!(
+            self.reference_count, 0,
+            "PathElem dropped while still referenced (according to refcount)"
         );
     }
 }
