@@ -64,7 +64,15 @@ impl PathLink {
     /// Read-only access to a path element from storage
     pub fn get<'storage>(&self, storage: &'storage PathElemStorage) -> &'storage PathElem {
         self.debug_assert_valid();
-        &storage.0[self.key]
+        // This is safe because...
+        // - The PathElemStorage newtype does not let the user manipulate the
+        //   storage, so PathLink is the only user-accessible way to insert and
+        //   remove PathElems from storage.
+        // - The reference counting protocol ensures that as long as there is
+        //   a live PathLink to a storage location (weak clones aside), the
+        //   corresponding PathElem cannot be destroyed.
+        debug_assert!(storage.0.contains_key(self.key));
+        unsafe { storage.0.get_unchecked(self.key) }
     }
 
     /// Mutable access to a path element from storage
@@ -73,7 +81,27 @@ impl PathLink {
         storage: &'storage mut PathElemStorage,
     ) -> &'storage mut PathElem {
         self.debug_assert_valid();
-        &mut storage.0[self.key]
+        Self::get_mut_impl(self.key, storage)
+    }
+
+    /// Implementation of get_mut()
+    fn get_mut_impl<'storage>(
+        key: DefaultKey,
+        storage: &'storage mut PathElemStorage,
+    ) -> &'storage mut PathElem {
+        // This is safe for the same reasons that get() is safe
+        debug_assert!(storage.0.contains_key(key));
+        unsafe { storage.0.get_unchecked_mut(key) }
+    }
+
+    /// Instruct the CPU to prefetch the data behind this PathLink, if supported
+    pub fn prefetch(&self, storage: &PathElemStorage) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            // This is safe because we only execute the code on x86_64
+            unsafe { _mm_prefetch(self.get(storage) as *const _ as *const i8, _MM_HINT_T0) };
+        }
     }
 
     /// Make a new PathLink pointing to the same PathElem
@@ -88,9 +116,8 @@ impl PathLink {
     /// the underlying reference count
     ///
     /// Using this PathLink after all other "strong" PathLinks have been
-    /// destroyed may trigger undefined behavior in a future version of this
-    /// code, if we need to switch to unchecked storage indexing, so it is an
-    /// unsafe operation.
+    /// destroyed will trigger undefined behavior, so creating it obviously is
+    /// an unsafe operation.
     ///
     pub unsafe fn weak_clone(&self) -> Self {
         self.debug_assert_valid();
@@ -109,7 +136,7 @@ impl PathLink {
         self.debug_invalidate();
         while let Some(key) = disposed_key.take() {
             // Reduce refcount of current path element
-            let path_elem = &mut storage.0[key];
+            let path_elem = Self::get_mut_impl(key, storage);
             path_elem.reference_count -= 1;
 
             // If no one uses that path element anymore...

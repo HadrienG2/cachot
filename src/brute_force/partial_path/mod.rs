@@ -95,6 +95,16 @@ impl<'storage> PartialPath<'storage> {
         cache_model: &'storage CacheModel,
         path_elem_storage: &'storage RefCell<PathElemStorage>,
     ) -> Self {
+        // Prefetch the first path element
+        //
+        // We will need it to decrement the reference count when this
+        // PartialPath is dropped, and may need it before that for other
+        // operations like forking the path into sub-paths, so this won't be
+        // wasted cache work.
+        //
+        data.path.prefetch(&*path_elem_storage.borrow());
+
+        // Return the wrapped PartialPath
         Self {
             data,
             cache_model,
