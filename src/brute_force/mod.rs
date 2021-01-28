@@ -445,7 +445,7 @@ impl ProgressMonitor {
     pub fn record_step(&mut self, paths: &PriorizedPartialPaths) {
         // Only report on progress infrequently so that search isn't slowed down
         self.total_path_steps += 1;
-        const CLOCK_CHECK_RATE: u64 = 1 << 18;
+        const CLOCK_CHECK_RATE: u64 = 1 << 17;
         const REPORT_RATE: Duration = Duration::from_secs(5);
         if self.total_path_steps % CLOCK_CHECK_RATE == 0 && self.last_report.elapsed() > REPORT_RATE
         {
