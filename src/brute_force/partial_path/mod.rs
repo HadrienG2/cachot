@@ -161,8 +161,8 @@ impl Drop for PartialPath<'_> {
 
 /// Data about a path which we are in the process of exploring
 ///
-/// This struct tries to be as compact as possible (since it pretty much
-/// single-handedly dominates our memory capacity and bandwidth usage), but as a
+/// This struct tries to be as compact as possible because it dominates our
+/// memory bandwidth consumption and this program is memory-bound. But as a
 /// result it is incomplete without secondary information that is common to all
 /// partial paths, namely the location of the PathElemStorage container where
 /// all path elements are stored, and the underlying CPU cache model.
@@ -216,8 +216,8 @@ const_assert!(PathLen::MAX as usize >= _MAX_UNORDERED_PAIRS);
 //
 /// Type appropriate for representing feed pairs
 pub type PackedFeedPair = u8;
-const_assert!(PackedFeedPair::MAX as usize >= 2 * MAX_FEEDS as usize - 1);
-const PACKED_FEED_SHIFT: u32 = 8 * std::mem::size_of::<PackedFeedPair>() as u32 / 2;
+const PACKED_FEED_BITS: u32 = 8 * std::mem::size_of::<PackedFeedPair>() as u32 / 2;
+const_assert!(1 << PACKED_FEED_BITS >= MAX_FEEDS);
 //
 /// Total distance that was "walked" across a path step
 pub type StepDistance = f32;
@@ -227,13 +227,13 @@ impl PartialPathData {
     const fn pack_feed_pair(&[x, y]: &FeedPair) -> PackedFeedPair {
         // TODO: Enable once const fn can panic
         // debug_assert!(x < MAX_FEEDS && y < MAX_FEEDS);
-        (x << PACKED_FEED_SHIFT) + y
+        (x << PACKED_FEED_BITS) + y
     }
 
     /// Unpack a PackedFeedPair into a FeedPair
     const fn unpack_feed_pair(packed: PackedFeedPair) -> FeedPair {
-        let y = packed & ((1 << PACKED_FEED_SHIFT) - 1);
-        let x = packed >> PACKED_FEED_SHIFT;
+        let y = packed & ((1 << PACKED_FEED_BITS) - 1);
+        let x = packed >> PACKED_FEED_BITS;
         [x, y]
     }
 
