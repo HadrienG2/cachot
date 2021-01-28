@@ -28,7 +28,7 @@ const fn div_round_up(num: usize, denom: usize) -> usize {
 /// Maximum number of machine words needed to store one bit per feed pair
 const MAX_PAIR_WORDS: usize = div_round_up(MAX_PAIRS, WORD_SIZE as usize);
 
-/// Path which we are in the process of exploring
+/// Path which we are in the process of exploring (high-level API)
 pub struct PartialPath<'storage> {
     /// Inner data
     data: PartialPathData,
@@ -71,9 +71,6 @@ impl<'storage> PartialPath<'storage> {
     /// Given an extra feed pair, tell what the accumulated cache cost would
     /// become if the path was completed by this pair, and what the cache
     /// entries would then be.
-    //
-    // NOTE: This operation is super hot and must be very fast
-    //
     pub fn evaluate_next_step(&self, next_step: &FeedPair) -> NextStepEvaluation {
         self.data.evaluate_next_step(self.cache_model, next_step)
     }
@@ -224,6 +221,9 @@ pub type StepDistance = f32;
 //
 impl PartialPathData {
     /// Pack a FeedPair into a PackedFeedPair
+    //
+    // NOTE: This operation is relatively hot and must be quite fast
+    //
     const fn pack_feed_pair(&[x, y]: &FeedPair) -> PackedFeedPair {
         // TODO: Enable once const fn can panic
         // debug_assert!(x < MAX_FEEDS && y < MAX_FEEDS);
@@ -231,6 +231,9 @@ impl PartialPathData {
     }
 
     /// Unpack a PackedFeedPair into a FeedPair
+    //
+    // NOTE: This operation is super hot and must be very fast
+    //
     const fn unpack_feed_pair(packed: PackedFeedPair) -> FeedPair {
         let y = packed & ((1 << PACKED_FEED_BITS) - 1);
         let x = packed >> PACKED_FEED_BITS;
@@ -438,8 +441,8 @@ impl PartialPathData {
 
     /// Cleanly dispose of the path's elements
     ///
-    /// This should be called before the PartialPathData is dropped. PartialPath
-    /// will take care of this for you automatically.
+    /// This should be called before the PartialPathData is dropped. The
+    /// PartialPath high-level API will take care of this for you automatically.
     ///
     fn drop_elems(&mut self, path_elem_storage: &mut PathElemStorage) {
         self.path.dispose(path_elem_storage);
