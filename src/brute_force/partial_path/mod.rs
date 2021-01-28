@@ -10,7 +10,7 @@ use crate::{
     cache::{self, CacheModel, CacheSimulation},
     FeedIdx, MAX_FEEDS, MAX_PAIRS, _MAX_UNORDERED_PAIRS,
 };
-use fixed::{types::extra::U3, FixedU16};
+use fixed::{types::extra::U7, FixedU16};
 use num_traits::identities::{One, Zero};
 use static_assertions::const_assert;
 use std::{
@@ -218,8 +218,8 @@ const PACKED_FEED_BITS: u32 = 8 * std::mem::size_of::<PackedFeedPair>() as u32 /
 const_assert!(1 << PACKED_FEED_BITS >= MAX_FEEDS);
 //
 /// Total distance that was "walked" across a path step
-pub type StepDistance = FixedU16<U3>;
-const _STEP_DISTANCE_GRANULARITY: u8 = 1 << 3;
+pub type StepDistance = FixedU16<U7>;
+const _STEP_DISTANCE_GRANULARITY: u16 = 1 << 7;
 //
 impl PartialPathData {
     /// Pack a FeedPair into a PackedFeedPair
