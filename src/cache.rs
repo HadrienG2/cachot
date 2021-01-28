@@ -10,6 +10,13 @@ pub type Entry = FeedIdx;
 
 /// Operation cache cost is modeled using a very small fixed-point type to keep
 /// PartialPathData as small as possible.
+///
+/// But here we're really pushing our luck, as this type cannot represent
+/// numbers bigger than 63.75! If we end up overflowing it in later studies,
+/// we'll need to switch to FixedU16, at the cost of bringing back
+/// PartialPathData above 256 bits again. In that case, we'll fix that by
+/// using fixed point for StepDistance too.
+///
 pub type Cost = FixedU8<U2>;
 const COST_GRANULARITY: u8 = 1 << 2;
 
