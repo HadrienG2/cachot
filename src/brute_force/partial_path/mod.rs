@@ -2,14 +2,15 @@
 
 mod history;
 
-pub use history::PathElemStorage;
+pub use self::history::PathElemStorage;
 
+use self::history::PathLink;
 use super::FeedPair;
 use crate::{
     cache::{self, CacheModel, CacheSimulation},
     FeedIdx, MAX_FEEDS, MAX_PAIRS,
 };
-use history::PathLink;
+use num_traits::identities::Zero;
 use std::{
     cell::{Ref, RefCell},
     ops::Deref,
@@ -244,7 +245,7 @@ impl PartialPathData {
         start_step: FeedPair,
     ) -> Self {
         let mut cache_sim = cache_model.start_simulation();
-        let mut curr_cost = 0.0;
+        let mut curr_cost = cache::Cost::zero();
         for &feed in start_step.iter() {
             curr_cost += cache_sim.simulate_access(&cache_model, feed);
         }

@@ -4,6 +4,7 @@ use crate::{
     cache::{self, CacheModel, L1_MISS_COST, NEW_ENTRY_COST},
     FeedIdx,
 };
+use num_traits::identities::Zero;
 
 /// Test harness for evaluating the locality of several feed pair iterators and
 /// picking the best of them.
@@ -33,16 +34,16 @@ impl PairLocalityTester {
             println!("\nTesting feed pair iterator \"{}\"...", name);
         }
         let mut cache_sim = self.cache_model.start_simulation();
-        let mut total_cost = 0.0;
-        let mut new_entries_cost = 0.0;
+        let mut total_cost = cache::Cost::zero();
+        let mut new_entries_cost = cache::Cost::zero();
         let mut cumulative_cost = Vec::new();
         let mut feed_load_count = 0;
         for feed_pair in feed_pair_iterator {
             if self.debug_level >= 2 {
                 println!("- Accessing feed pair {:?}...", feed_pair)
             }
-            let mut pair_cost = 0.0;
-            let mut pair_entries_cost = 0.0;
+            let mut pair_cost = cache::Cost::zero();
+            let mut pair_entries_cost = cache::Cost::zero();
             for feed in feed_pair.iter().copied() {
                 let prev_accessed_entries = cache_sim.num_accessed_entries();
                 let feed_cost = cache_sim.simulate_access(&self.cache_model, feed);
@@ -55,8 +56,7 @@ impl PairLocalityTester {
                     )
                 }
                 pair_cost += feed_cost;
-                pair_entries_cost +=
-                    is_new_entry as u8 as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
+                pair_entries_cost += is_new_entry as u8 * NEW_ENTRY_COST / L1_MISS_COST;
             }
             let new_entries_str = if pair_entries_cost != 0.0 {
                 format!(" ({} from first accesses)", pair_entries_cost)
@@ -85,13 +85,13 @@ impl PairLocalityTester {
                 name,
                 total_cost,
                 total_cost - new_entries_cost,
-                (total_cost - new_entries_cost) / (feed_load_count as cache::Cost)
+                (total_cost - new_entries_cost).to_num::<f32>() / (feed_load_count as f32)
             ),
             _ => println!(
                 "- Total cache cost of this iterator is {}, {} w/o first accesses, {:.2} per feed load",
                 total_cost,
                 total_cost - new_entries_cost,
-                (total_cost - new_entries_cost) / (feed_load_count as cache::Cost)
+                (total_cost - new_entries_cost).to_num::<f32>() / (feed_load_count as f32)
             ),
         }
         let best_cost = self

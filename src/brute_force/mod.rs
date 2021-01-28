@@ -14,6 +14,7 @@ use crate::{
     cache::{self, CacheModel, L1_MISS_COST, NEW_ENTRY_COST},
     FeedIdx, MAX_FEEDS,
 };
+use num_traits::identities::Zero;
 use std::{cell::RefCell, fmt::Write, time::Duration};
 
 /// Configure the level of debugging features from brute force path search.
@@ -53,7 +54,7 @@ pub fn search_best_path(
     // We'll do multiple algorithmic passes with increasing tolerance, starting
     // with zero tolerance in order to quickly improve our best path estimate in
     // a minimal search space.
-    let mut tolerance = 0.0;
+    let mut tolerance = cache::Cost::zero();
     'tolerance: loop {
         // For the same reason, for each tolerance, we'll start by only
         // considering very close neighbors of the current path element, and
@@ -102,7 +103,9 @@ pub fn search_best_path(
 
             // Detect if we found one of the best possible paths, in which case
             // increasing the size of the search space any further is useless.
-            if *best_cumulative_cost.last().unwrap() == 1.0 + cache::min_cache_cost(num_feeds) {
+            if *best_cumulative_cost.last().unwrap()
+                == L1_MISS_COST + cache::min_cache_cost(num_feeds)
+            {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                     println!("  * We won't be able to do any better than this cache cost.");
                 }
@@ -124,9 +127,9 @@ pub fn search_best_path(
         if tolerance >= max_tolerance {
             break 'tolerance;
         } else if tolerance == 0.0 {
-            tolerance = 1.0
+            tolerance = L1_MISS_COST
         } else {
-            tolerance = (2.0 * tolerance).min(max_tolerance);
+            tolerance = (2 * tolerance).min(max_tolerance);
         }
     }
 
@@ -192,7 +195,7 @@ fn search_best_path_iteration(
             && num_feeds <= MAX_FEEDS
             && max_radius > 0
             && entry_size > 0
-            && last_cost_record >= 1.0 + cache::min_cache_cost(num_feeds)
+            && last_cost_record >= L1_MISS_COST + cache::min_cache_cost(num_feeds)
     );
 
     // Set up the cache model
@@ -339,8 +342,7 @@ fn search_best_path_iteration(
                         }
 
                         // Announce victory
-                        let new_entries_cost =
-                            num_feeds as cache::Cost * NEW_ENTRY_COST / L1_MISS_COST;
+                        let new_entries_cost = num_feeds * NEW_ENTRY_COST / L1_MISS_COST;
                         if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                             println!("  * Reached a new cache cost or extra distance record!");
                             println!(

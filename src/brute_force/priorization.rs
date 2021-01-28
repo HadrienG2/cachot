@@ -17,7 +17,7 @@
 //! priorizing the most promising tracks over others.
 
 use super::{partial_path::PartialPathData, FeedPair, PartialPath, PathElemStorage, StepDistance};
-use crate::cache::{self, CacheModel};
+use crate::cache::CacheModel;
 use rand::prelude::*;
 use std::{cell::RefCell, cmp::Ordering, collections::BinaryHeap};
 
@@ -228,7 +228,7 @@ impl Drop for PriorizedPartialPaths<'_> {
 struct PriorizedPath(PartialPathData);
 //
 /// Priorize cache cost, then given equal cache cost priorize simplest path
-type Priority = (cache::Cost, StepDistance);
+type Priority = (isize, StepDistance);
 //
 impl PriorizedPath {
     /// Build a PriorizedPath from a PartialPath
@@ -248,7 +248,10 @@ impl PriorizedPath {
     /// Prioritize a certain path with respect to other paths of equal length.
     /// A higher priority means that a path will be processed first.
     fn priority(&self) -> Priority {
-        (-self.0.cost_so_far(), -self.0.extra_distance())
+        (
+            -(self.0.cost_so_far().to_bits() as isize),
+            -self.0.extra_distance(),
+        )
     }
 }
 //

@@ -1,10 +1,17 @@
 //! Minimal cache simulator for 2D iteration locality studies
 
 use crate::{FeedIdx, MAX_FEEDS, _MAX_UNORDERED_PAIRS};
+use fixed::{types::extra::U2, FixedU8};
+use num_traits::identities::Zero;
 use static_assertions::const_assert;
 
+/// In our simplified cache model, radio feeds are indivisible cache entities
 pub type Entry = FeedIdx;
-pub type Cost = f32;
+
+/// Operation cache cost is modeled using a very small fixed-point type to keep
+/// PartialPathData as small as possible.
+pub type Cost = FixedU8<U2>;
+const COST_GRANULARITY: u8 = 1 << 2;
 
 // Numbers stolen from the latency plot of Anandtech's Zen3 review, not very
 // precise but we only care about the orders of magnitude on recent CPUs...
@@ -15,12 +22,15 @@ pub type Cost = f32;
 // We're taking the height of cache latencies plateaux as our cost figure and
 // the abscissa of half-plateau as our capacity figure.
 //
+// All numbers are expressed relative to L1 cache misses in order to save
+// precious fixed-point bits.
+//
 pub const L1_CAPACITY: usize = 32 * 1024;
-pub const L1_MISS_COST: Cost = 2.0;
+pub const L1_MISS_COST: Cost = Cost::from_bits(COST_GRANULARITY);
 pub const L2_CAPACITY: usize = 512 * 1024;
-pub const L2_MISS_COST: Cost = 10.0;
+pub const L2_MISS_COST: Cost = Cost::from_bits(5 * COST_GRANULARITY);
 pub const L3_CAPACITY: usize = 32 * 1024 * 1024;
-pub const L3_MISS_COST: Cost = 60.0;
+pub const L3_MISS_COST: Cost = Cost::from_bits(30 * COST_GRANULARITY);
 
 /// Cost of accessing a cache entry that was never accessed before
 ///
@@ -33,11 +43,11 @@ pub const L3_MISS_COST: Cost = 60.0;
 /// new cache entry, but not to the point of not doing so when it can avoid a
 /// cache miss or two that way.
 ///
-pub const NEW_ENTRY_COST: Cost = 0.25 * L1_MISS_COST;
+pub const NEW_ENTRY_COST: Cost = Cost::from_bits(COST_GRANULARITY / 4);
 
 /// Minimum cache cost of accessing N entries, in units of L1 cache misses
 pub fn min_cache_cost(num_entries: Entry) -> Cost {
-    num_entries as Cost * NEW_ENTRY_COST / L1_MISS_COST
+    num_entries * NEW_ENTRY_COST / L1_MISS_COST
 }
 
 /// CPU cache model, used for evaluating locality merits of 2D iteration schemes
@@ -77,16 +87,16 @@ impl CacheModel {
     fn cost_model(&self, age: Option<usize>) -> Cost {
         if let Some(age) = age {
             if age < self.l1_entries {
-                0.0
+                Cost::zero()
             } else if age < self.l2_entries {
-                1.0
+                L1_MISS_COST
             } else if age < self.l3_entries {
-                L2_MISS_COST / L1_MISS_COST
+                L2_MISS_COST
             } else {
-                L3_MISS_COST / L1_MISS_COST
+                L3_MISS_COST
             }
         } else {
-            NEW_ENTRY_COST / L1_MISS_COST
+            NEW_ENTRY_COST
         }
     }
 
