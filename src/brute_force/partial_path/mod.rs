@@ -195,7 +195,7 @@ pub struct PartialPathData {
     path_len: PathLen,
 
     /// Last path step
-    curr_step: FeedPair,
+    curr_step: PackedFeedPair,
 
     /// Total cache cost, accumulated over previous path steps
     curr_cost: cache::Cost,
@@ -214,10 +214,29 @@ pub struct PartialPathData {
 pub type PathLen = u8;
 const_assert!(PathLen::MAX as usize >= _MAX_UNORDERED_PAIRS);
 //
+/// Type appropriate for representing feed pairs
+pub type PackedFeedPair = u8;
+const_assert!(PackedFeedPair::MAX as usize >= 2 * MAX_FEEDS as usize - 1);
+const PACKED_FEED_SHIFT: u32 = 8 * std::mem::size_of::<PackedFeedPair>() as u32 / 2;
+//
 /// Total distance that was "walked" across a path step
 pub type StepDistance = f32;
 //
 impl PartialPathData {
+    /// Pack a FeedPair into a PackedFeedPair
+    const fn pack_feed_pair(&[x, y]: &FeedPair) -> PackedFeedPair {
+        // TODO: Enable once const fn can panic
+        // debug_assert!(x < MAX_FEEDS && y < MAX_FEEDS);
+        (x << PACKED_FEED_SHIFT) + y
+    }
+
+    /// Unpack a PackedFeedPair into a FeedPair
+    const fn unpack_feed_pair(packed: PackedFeedPair) -> FeedPair {
+        let y = packed & ((1 << PACKED_FEED_SHIFT) - 1);
+        let x = packed >> PACKED_FEED_SHIFT;
+        [x, y]
+    }
+
     /// Index of a certain coordinate in the visited_pairs bitvec
     //
     // NOTE: This operation is super hot and must be very fast
@@ -271,7 +290,7 @@ impl PartialPathData {
         Self {
             path,
             path_len: 1,
-            curr_step: start_step,
+            curr_step: Self::pack_feed_pair(&start_step),
             curr_cost,
             visited_pairs,
             cache_sim,
@@ -299,8 +318,8 @@ impl PartialPathData {
     //
     // NOTE: This operation is hot and must be fast
     //
-    pub fn last_step(&self) -> &FeedPair {
-        &self.curr_step
+    pub fn last_step(&self) -> FeedPair {
+        Self::unpack_feed_pair(self.curr_step)
     }
 
     /// Iterate over the path steps and cumulative costs in reverse step order
@@ -409,7 +428,7 @@ impl PartialPathData {
         Self {
             path: next_path,
             path_len: self.path_len + 1,
-            curr_step: next_step,
+            curr_step: Self::pack_feed_pair(&next_step),
             curr_cost: next_cost,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
