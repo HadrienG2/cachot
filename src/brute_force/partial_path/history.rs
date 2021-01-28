@@ -96,6 +96,7 @@ impl PathLink {
 
     /// Instruct the CPU to prefetch the data behind this PathLink, if supported
     pub fn prefetch(&self, storage: &PathElemStorage) {
+        self.debug_assert_valid();
         #[cfg(target_arch = "x86_64")]
         {
             use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};

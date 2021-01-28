@@ -147,6 +147,8 @@ pub fn search_best_path(
     best_path
 }
 
+// ---
+
 /// Iteration of best path brute force search
 ///
 /// Like all brute force searches, our brute force search for an optimal path is
