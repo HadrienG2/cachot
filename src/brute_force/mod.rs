@@ -4,9 +4,9 @@
 pub(self) mod partial_path;
 mod priorization;
 
-pub use self::partial_path::{PartialPath, PathElemStorage, StepDistance};
+pub use self::partial_path::{PartialPath, PathElemStorage};
 
-use self::priorization::PriorizedPartialPaths;
+use self::{partial_path::StepDistance, priorization::PriorizedPartialPaths};
 use crate::{
     cache::{self, CacheModel, L1_MISS_COST, NEW_ENTRY_COST},
     FeedIdx, MAX_FEEDS,
@@ -42,6 +42,126 @@ pub type Path = Box<[FeedPair]>;
 /// Use brute force to find a path which is better than our best strategy so far
 /// according to our cache simulation.
 pub fn search_best_path(
+    num_feeds: FeedIdx,
+    entry_size: usize,
+    best_cumulative_cost: &mut [cache::Cost],
+    iteration_timeout: Duration,
+) -> Option<Path> {
+    // Seed simplest path record tracker
+    let mut best_extra_distance = StepDistance::MAX;
+    let mut best_path = None;
+
+    // We'll do multiple algorithmic passes with increasing tolerance, starting
+    // with zero tolerance in order to quickly improve our best path estimate in
+    // a minimal search space.
+    let mut tolerance = 0.0;
+    'tolerance: loop {
+        // For the same reason, for each tolerance, we'll start by only
+        // considering very close neighbors of the current path element, and
+        // increasing the neighbor search radius gradually.
+        let mut search_radius = 1;
+        'radius: loop {
+            // Notify of loop progression
+            if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                println!(
+                    "- Using cumulative cost tolerance {} and neighbor search radius {}",
+                    tolerance, search_radius
+                );
+            }
+
+            // Perform a brute force search iteration
+            if let Some(path) = search_best_path_iteration(
+                num_feeds,
+                entry_size,
+                search_radius,
+                &mut best_cumulative_cost[..],
+                &mut best_extra_distance,
+                tolerance,
+                iteration_timeout,
+            ) {
+                if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                    println!(
+                        "  * Found a better path at cumulative cost tolerance {} and search radius {}:",
+                        tolerance, search_radius
+                    );
+                    println!(
+                        "    - Cache cost w/o first accesses: {}",
+                        best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
+                    );
+                    println!(
+                        "    - Deviation from unit steps: {:.2}",
+                        best_extra_distance
+                    );
+                    println!("    - Path: {:?}", path,);
+                }
+                best_path = Some(path);
+            } else {
+                if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                    println!("  * Did not find any better path");
+                }
+            }
+
+            // Detect if we found one of the best possible paths, in which case
+            // increasing the size of the search space any further is useless.
+            if *best_cumulative_cost.last().unwrap() == 1.0 + cache::min_cache_cost(num_feeds) {
+                if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+                    println!("  * We won't be able to do any better than this cache cost.");
+                }
+                break 'tolerance;
+            }
+
+            // Increase search radius
+            let max_radius = num_feeds - 1;
+            if search_radius == max_radius {
+                break 'radius;
+            } else {
+                search_radius = (2 * search_radius).min(max_radius);
+                continue 'radius;
+            }
+        }
+
+        // Increase cache cost tolerance
+        let max_tolerance = *best_cumulative_cost.last().unwrap();
+        if tolerance >= max_tolerance {
+            break 'tolerance;
+        } else if tolerance == 0.0 {
+            tolerance = 1.0
+        } else {
+            tolerance = (2.0 * tolerance).min(max_tolerance);
+        }
+    }
+    best_path
+}
+
+/// Iteration of best path brute force search
+///
+/// Like all brute force searches, our brute force search for an optimal path is
+/// a constant struggle against combinatorial explosion. The number of paths is
+/// Npair! = [(Nfeeds)*(Nfeeds+1)/2]!, which for 8 feeds is 36! ~ 10^41 paths.
+/// There is no way we can exhaustively explore all of these paths, so we must
+/// operate under a finite time budget in which we use heuristics to...
+///
+/// - Explore most promising paths first, leaving paths which are less likely to
+///   beat our cache cost record for later.
+/// - Entirely eliminate paths which are particularly unlikely to beat the cache
+///   cost record, so that we have more RAM available to store more promising
+///   paths and make an informed choice between them.
+///
+/// The latter heuristic performs best when seeded with a good initial path,
+/// since we can use that path's cumulative cache cost as a guide to eliminate
+/// other paths with higher cumulative cache costs (modulo a certain tolerance,
+/// since sometimes losing some cache cost early in the path can help us pay a
+/// smaller cache cost later on.
+///
+/// Therefore, we start with a basic search with a strict cutoff (only consider
+/// nearest neighbors for path propagation, don't consider path candidates whose
+/// cumulative cache cost is any worse than the best path so far), which
+/// converges quickly, and then progressively enlarge the search space once we
+/// have a good initial guess that we can use to prune lots of combinatorics.
+///
+/// This function is the basis of that iterative behavior.
+///
+fn search_best_path_iteration(
     num_feeds: FeedIdx,
     entry_size: usize,
     max_radius: FeedIdx,
