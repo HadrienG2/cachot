@@ -200,7 +200,7 @@ impl<'storage> PriorizedPartialPaths<'storage> {
     }
 
     /// Count the total number of paths of each length that are currently stored
-    pub fn num_paths_by_len(&self) -> Vec<usize> {
+    pub fn num_paths_by_len(&self) -> Box<[usize]> {
         std::iter::repeat(0)
             .take(self.min_path_len - 1)
             .chain(self.paths_by_len.iter().map(|paths| paths.len()))
