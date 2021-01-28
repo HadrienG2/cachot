@@ -19,7 +19,11 @@
 use super::{partial_path::PartialPathData, FeedPair, PartialPath, PathElemStorage, StepDistance};
 use crate::cache::CacheModel;
 use rand::prelude::*;
-use std::{cell::RefCell, cmp::Ordering, collections::BinaryHeap};
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
+};
 
 /// Approximate limit on the number of stored paths in PriorizedPartialPaths
 ///
@@ -165,6 +169,68 @@ impl<'storage> PriorizedPartialPaths<'storage> {
                 self.curr_path_len += 1;
             }
         }
+
+        // DEBUG: Try out random index sampling
+        if self.iters_since_last_rng % (1 << 24) == 0 {
+            println!("---");
+            let mut paths_by_priorities =
+                HashMap::<isize, (usize, HashMap<isize, Vec<PriorizedPath>>)>::new();
+            for priorized_path in self.paths_by_len[self.curr_path_len].drain() {
+                let (cache_priority, distance_priority) = priorized_path.priority();
+                let (_path_count, paths_by_distance) =
+                    paths_by_priorities.entry(cache_priority).or_default();
+                let path_vec = paths_by_distance
+                    .entry((10.0 * distance_priority).round() as isize)
+                    .or_default();
+                path_vec.push(priorized_path);
+            }
+            println!("DEBUG: Let's list unique cache and distance priorities");
+            for (cache_priority, (ref mut path_count, paths_by_distance)) in
+                paths_by_priorities.iter_mut()
+            {
+                println!("- Found cache priority {}", cache_priority);
+                for (rounded_distance_priority, paths) in paths_by_distance.iter() {
+                    println!(
+                        "  * Found distance priority ~{} ({} paths)",
+                        *rounded_distance_priority as f32 / 10.0,
+                        paths.len()
+                    );
+                    *path_count += paths.len();
+                }
+            }
+            //---
+            println!("DEBUG: Setting up weighted index sampling");
+            let cache_priorities = paths_by_priorities.keys().collect::<Vec<_>>();
+            let dist = rand::distributions::weighted::WeightedIndex::new(
+                paths_by_priorities
+                    .iter()
+                    .inspect(|(cache_priority, (num_paths, _paths_by_distance))| {
+                        println!(
+                            "- Cache priority {} has {} paths",
+                            cache_priority, num_paths
+                        )
+                    })
+                    .map(|(cache_priority, (num_paths, _paths_by_distance))| {
+                        (*num_paths as f32) / -(*cache_priority as f32)
+                    })
+                    .inspect(|weight| println!("  * ...would get weight {}", weight)),
+            )
+            .unwrap();
+            let cache_priority = cache_priorities[dist.sample(&mut rng)];
+            println!("DEBUG: Would have picked cache priority {}", cache_priority);
+            //---
+            for priorized_path in paths_by_priorities
+                .into_iter()
+                .flat_map(|(_cache_priority, (_path_count, paths_by_distance))| {
+                    paths_by_distance.into_iter()
+                })
+                .flat_map(|(_distance_priority, partial_paths)| partial_paths.into_iter())
+            {
+                self.paths_by_len[self.curr_path_len].push(priorized_path);
+            }
+            println!("---");
+        }
+        self.iters_since_last_rng += 1;
 
         // Pop a path from the current path length slot
         //
