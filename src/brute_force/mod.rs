@@ -198,7 +198,7 @@ fn search_best_path_iteration(
 
     // Set up the cache model
     let cache_model = CacheModel::new(entry_size);
-    debug_assert!(
+    assert!(
         cache_model.max_l1_entries() >= 3,
         "Cache is unreasonably small"
     );
@@ -207,7 +207,7 @@ fn search_best_path_iteration(
     // x and y belonging to 0..num_feeds and y >= x. From this, we know exactly
     // how long the best path (assuming it exists) will be.
     let path_length = ((num_feeds as usize) * ((num_feeds as usize) + 1)) / 2;
-    debug_assert_eq!(best_cumulative_cost.len(), path_length);
+    assert_eq!(best_cumulative_cost.len(), path_length);
 
     // Set up storage for paths throughout the space of feed pairs
     let path_elem_storage = RefCell::new(PathElemStorage::new());
