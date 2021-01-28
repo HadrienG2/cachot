@@ -356,7 +356,7 @@ impl PartialPathData {
             + next_step
                 .iter()
                 .map(|&feed| next_cache.simulate_access(&cache_model, feed))
-                .sum::<f32>();
+                .sum::<cache::Cost>();
         NextStepEvaluation {
             next_step,
             next_cost,

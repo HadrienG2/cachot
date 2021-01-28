@@ -31,7 +31,7 @@ pub(crate) const MAX_FEEDS: FeedIdx = 8 /* 16 */;
 const MAX_PAIRS: usize = MAX_FEEDS as usize * MAX_FEEDS as usize;
 
 /// Maximum number of ordered feed pairs
-const MAX_ORDERED_PAIRS: usize = MAX_FEEDS as usize * (MAX_FEEDS as usize + 1) / 2;
+const _MAX_UNORDERED_PAIRS: usize = MAX_FEEDS as usize * (MAX_FEEDS as usize + 1) / 2;
 
 fn main() {
     #[rustfmt::skip]

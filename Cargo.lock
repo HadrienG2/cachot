@@ -8,6 +8,7 @@ dependencies = [
  "rand",
  "slotmap",
  "space-filler",
+ "static_assertions",
 ]
 
 [[package]]
@@ -172,6 +173,12 @@ dependencies = [
 name = "space-filler"
 version = "0.1.0"
 source = "git+https://github.com/HadrienG2/space-filler.git#02870fab33d6c558813fcf295160e522c3ed7346"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "syn"
