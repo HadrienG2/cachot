@@ -213,7 +213,7 @@ impl<'storage> PriorizedPartialPaths<'storage> {
     }
 }
 //
-struct PriorizedPath(PartialPathData);
+struct PriorizedPath(PartialPathData, cache::Cost);
 //
 /// Priorize cache cost, then given equal cache cost priorize simplest path
 type Priority = (cache::Cost, StepDistance);
@@ -221,7 +221,8 @@ type Priority = (cache::Cost, StepDistance);
 impl PriorizedPath {
     /// Build a PriorizedPath from a PartialPath
     fn new(path: PartialPath) -> Self {
-        Self(path.unwrap())
+        let cost_so_far = path.cost_so_far();
+        Self(path.unwrap(), cost_so_far)
     }
 
     /// Build a PartialPath from a PriorizedPath
@@ -236,7 +237,7 @@ impl PriorizedPath {
     /// Prioritize a certain path with respect to other paths of equal length.
     /// A higher priority means that a path will be processed first.
     fn priority(&self) -> Priority {
-        (-self.0.cost_so_far(), -self.0.extra_distance())
+        (-self.1, -self.0.extra_distance())
     }
 }
 //

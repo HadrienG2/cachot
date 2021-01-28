@@ -66,6 +66,14 @@ impl<'storage> PartialPath<'storage> {
         self.data.iter_rev(self.path_elem_storage.borrow())
     }
 
+    /// Get the accumulated cache cost of following this path so far
+    //
+    // NOTE: This operation is hot and must be fast
+    //
+    pub fn cost_so_far(&self) -> cache::Cost {
+        self.path.get(&self.path_elem_storage.borrow()).curr_cost
+    }
+
     /// Given an extra feed pair, tell what the accumulated cache cost would
     /// become if the path was completed by this pair, and what the cache
     /// entries would then be.
@@ -73,7 +81,11 @@ impl<'storage> PartialPath<'storage> {
     // NOTE: This operation is super hot and must be very fast
     //
     pub fn evaluate_next_step(&self, next_step: &FeedPair) -> NextStepEvaluation {
-        self.data.evaluate_next_step(self.cache_model, next_step)
+        self.data.evaluate_next_step(
+            &self.path_elem_storage.borrow(),
+            self.cache_model,
+            next_step,
+        )
     }
 
     /// Create a new partial path which follows all the steps from this one,
@@ -102,7 +114,7 @@ impl<'storage> PartialPath<'storage> {
         // operations like forking the path into sub-paths, so this won't be
         // wasted cache work.
         //
-        data.path.prefetch(&*path_elem_storage.borrow());
+        data.path.prefetch(&path_elem_storage.borrow());
 
         // Return the wrapped PartialPath
         Self {
@@ -195,9 +207,6 @@ pub struct PartialPathData {
     /// Last path step
     curr_step: FeedPair,
 
-    /// Total cache cost, accumulated over previous path steps
-    curr_cost: cache::Cost,
-
     /// Deviation of path steps from basic (1, 0) steps
     extra_distance: StepDistance,
 
@@ -266,7 +275,6 @@ impl PartialPathData {
             path,
             path_len: 1,
             curr_step: start_step,
-            curr_cost,
             visited_pairs,
             cache_sim,
             extra_distance: 0.0,
@@ -311,7 +319,7 @@ impl PartialPathData {
         // prevents the underlying PathLink from being disposed of.
         let mut next_node = Some(unsafe { self.path.weak_clone() });
         std::iter::from_fn(move || {
-            let node = next_node.take()?.get(&*path_elem_storage);
+            let node = next_node.take()?.get(&path_elem_storage);
             // This weak clone is safe because the PathLink that we are cloning
             // is protected by the PathLink that we locked above.
             next_node = node
@@ -336,8 +344,8 @@ impl PartialPathData {
     //
     // NOTE: This operation is hot and must be fast
     //
-    pub fn cost_so_far(&self) -> cache::Cost {
-        self.curr_cost
+    fn cost_so_far(&self, path_elem_storage: &PathElemStorage) -> cache::Cost {
+        self.path.get(path_elem_storage).curr_cost
     }
 
     /// Given an extra feed pair, tell what the accumulated cache cost would
@@ -348,11 +356,12 @@ impl PartialPathData {
     //
     fn evaluate_next_step(
         &self,
+        path_elem_storage: &PathElemStorage,
         cache_model: &CacheModel,
         &next_step: &FeedPair,
     ) -> NextStepEvaluation {
         let mut next_cache = self.cache_sim.clone();
-        let next_cost = self.cost_so_far()
+        let next_cost = self.cost_so_far(path_elem_storage)
             + next_step
                 .iter()
                 .map(|&feed| next_cache.simulate_access(&cache_model, feed))
@@ -404,7 +413,6 @@ impl PartialPathData {
             path: next_path,
             path_len: self.path_len + 1,
             curr_step: next_step,
-            curr_cost: next_cost,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
             extra_distance: self.extra_distance + (step_length - 1.0),
