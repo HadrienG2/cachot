@@ -29,9 +29,9 @@ impl PathElemStorage {
 /// the system memory allocator.
 ///
 /// You must call dispose() before dropping this struct, otherwise you'll have a
-/// memory leak on your hand. This is checked in debug build.
+/// memory leak on your hands. This is checked in debug build.
 ///
-pub struct PathLink {
+pub(super) struct PathLink {
     /// Key of the target PathElem in the underlying PathElemStorage
     key: DefaultKey,
 
@@ -184,7 +184,7 @@ impl Drop for PathLink {
 }
 
 /// Reference-counted PartialPath path element
-pub struct PathElem {
+pub(super) struct PathElem {
     /// Number of references to that path element in existence
     ///
     /// This is 1 when a path is created, increases to N when a path is forked
