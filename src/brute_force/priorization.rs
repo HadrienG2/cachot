@@ -16,7 +16,7 @@
 //! we are in the process of exploring in a data structure which allows
 //! priorizing the most promising tracks over others.
 
-use super::{partial_path::PartialPathData, FeedPair, PartialPath, PathElemStorage, StepDistance};
+use super::{partial_path::PartialPathData, FeedPair, PartialPath, PathElemStorage};
 use crate::cache::CacheModel;
 use rand::prelude::*;
 use std::{cell::RefCell, cmp::Ordering, collections::BinaryHeap};
@@ -228,7 +228,7 @@ impl Drop for PriorizedPartialPaths<'_> {
 struct PriorizedPath(PartialPathData);
 //
 /// Priorize cache cost, then given equal cache cost priorize simplest path
-type Priority = (isize, StepDistance);
+type Priority = (isize, isize);
 //
 impl PriorizedPath {
     /// Build a PriorizedPath from a PartialPath
@@ -250,7 +250,7 @@ impl PriorizedPath {
     fn priority(&self) -> Priority {
         (
             -(self.0.cost_so_far().to_bits() as isize),
-            -self.0.extra_distance(),
+            -(self.0.extra_distance().to_bits() as isize),
         )
     }
 }

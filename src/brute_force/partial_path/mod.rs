@@ -10,7 +10,8 @@ use crate::{
     cache::{self, CacheModel, CacheSimulation},
     FeedIdx, MAX_FEEDS, MAX_PAIRS, _MAX_UNORDERED_PAIRS,
 };
-use num_traits::identities::Zero;
+use fixed::{types::extra::U3, FixedU16};
+use num_traits::identities::{One, Zero};
 use static_assertions::const_assert;
 use std::{
     cell::{Ref, RefCell},
@@ -217,7 +218,8 @@ const PACKED_FEED_BITS: u32 = 8 * std::mem::size_of::<PackedFeedPair>() as u32 /
 const_assert!(1 << PACKED_FEED_BITS >= MAX_FEEDS);
 //
 /// Total distance that was "walked" across a path step
-pub type StepDistance = f32;
+pub type StepDistance = FixedU16<U3>;
+const _STEP_DISTANCE_GRANULARITY: u8 = 1 << 3;
 //
 impl PartialPathData {
     /// Pack a FeedPair into a PackedFeedPair
@@ -297,7 +299,7 @@ impl PartialPathData {
             curr_cost,
             visited_pairs,
             cache_sim,
-            extra_distance: 0.0,
+            extra_distance: StepDistance::zero(),
         }
     }
 
@@ -418,15 +420,16 @@ impl PartialPathData {
         //       it is too expensive use get_unchecked.
         next_visited_pairs[word] |= 1 << bit;
 
-        let step_length = self
-            .last_step()
-            .iter()
-            .zip(next_step.iter())
-            .map(|(&curr_coord, &next_coord)| {
-                ((next_coord as StepDistance) - (curr_coord as StepDistance)).powi(2)
-            })
-            .sum::<StepDistance>()
-            .sqrt();
+        let step_length = StepDistance::from_num(
+            self.last_step()
+                .iter()
+                .zip(next_step.iter())
+                .map(|(&curr_coord, &next_coord)| {
+                    ((next_coord as f32) - (curr_coord as f32)).powi(2)
+                })
+                .sum::<f32>()
+                .sqrt(),
+        );
 
         Self {
             path: next_path,
@@ -435,7 +438,7 @@ impl PartialPathData {
             curr_cost: next_cost,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
-            extra_distance: self.extra_distance + (step_length - 1.0),
+            extra_distance: self.extra_distance + (step_length - StepDistance::one()),
         }
     }
 

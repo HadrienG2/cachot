@@ -1,7 +1,7 @@
 //! Minimal cache simulator for 2D iteration locality studies
 
 use crate::{FeedIdx, MAX_FEEDS, _MAX_UNORDERED_PAIRS};
-use fixed::{types::extra::U2, FixedU8};
+use fixed::{types::extra::U2, FixedU16};
 use num_traits::identities::Zero;
 use static_assertions::const_assert;
 
@@ -10,15 +10,8 @@ pub type Entry = FeedIdx;
 
 /// Operation cache cost is modeled using a very small fixed-point type to keep
 /// PartialPathData as small as possible.
-///
-/// But here we're really pushing our luck, as this type cannot represent
-/// numbers bigger than 63.75! If we end up overflowing it in later studies,
-/// we'll need to switch to FixedU16, at the cost of bringing back
-/// PartialPathData above 256 bits again. In that case, we'll fix that by
-/// using fixed point for StepDistance too.
-///
-pub type Cost = FixedU8<U2>;
-const COST_GRANULARITY: u8 = 1 << 2;
+pub type Cost = FixedU16<U2>;
+const COST_GRANULARITY: u16 = 1 << 2;
 
 // Numbers stolen from the latency plot of Anandtech's Zen3 review, not very
 // precise but we only care about the orders of magnitude on recent CPUs...
@@ -54,7 +47,7 @@ pub const NEW_ENTRY_COST: Cost = Cost::from_bits(COST_GRANULARITY / 4);
 
 /// Minimum cache cost of accessing N entries, in units of L1 cache misses
 pub fn min_cache_cost(num_entries: Entry) -> Cost {
-    num_entries * NEW_ENTRY_COST / L1_MISS_COST
+    Cost::from_num(num_entries) * NEW_ENTRY_COST / L1_MISS_COST
 }
 
 /// CPU cache model, used for evaluating locality merits of 2D iteration schemes

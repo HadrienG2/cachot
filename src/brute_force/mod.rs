@@ -90,7 +90,7 @@ pub fn search_best_path(
                         best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
                     );
                     println!(
-                        "    - Deviation from unit steps: {:.2}",
+                        "    - Deviation from unit steps: {:.1}",
                         best_extra_distance
                     );
                 }
@@ -141,7 +141,7 @@ pub fn search_best_path(
                 "  * Cache cost w/o first accesses: {}",
                 best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
             );
-            println!("  * Deviation from unit steps: {:.2}", best_extra_distance);
+            println!("  * Deviation from unit steps: {:.1}", best_extra_distance);
         } else {
             println!("- Did not find any better path than the original seed!");
         }
@@ -342,11 +342,12 @@ fn search_best_path_iteration(
                         }
 
                         // Announce victory
-                        let new_entries_cost = num_feeds * NEW_ENTRY_COST / L1_MISS_COST;
+                        let new_entries_cost =
+                            cache::Cost::from_num(num_feeds) * NEW_ENTRY_COST / L1_MISS_COST;
                         if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                             println!("  * Reached a new cache cost or extra distance record!");
                             println!(
-                                "    - Total cache cost was {} ({} w/o new entries), extra distance was {:.2}",
+                                "    - Total cache cost was {} ({} w/o new entries), extra distance was {:.1}",
                                 next_cost,
                                 next_cost - new_entries_cost,
                                 partial_path.extra_distance()

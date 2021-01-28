@@ -56,7 +56,8 @@ impl PairLocalityTester {
                     )
                 }
                 pair_cost += feed_cost;
-                pair_entries_cost += is_new_entry as u8 * NEW_ENTRY_COST / L1_MISS_COST;
+                pair_entries_cost +=
+                    cache::Cost::from_num(is_new_entry as u8) * NEW_ENTRY_COST / L1_MISS_COST;
             }
             let new_entries_str = if pair_entries_cost != 0.0 {
                 format!(" ({} from first accesses)", pair_entries_cost)
