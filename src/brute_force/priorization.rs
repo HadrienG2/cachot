@@ -213,6 +213,18 @@ impl<'storage> PriorizedPartialPaths<'storage> {
     }
 }
 //
+impl Drop for PriorizedPartialPaths<'_> {
+    fn drop(&mut self) {
+        for paths in self.paths_by_len.drain(..) {
+            for priorized_path in paths {
+                std::mem::drop(
+                    priorized_path.into_partial_path(self.cache_model, self.path_elem_storage),
+                );
+            }
+        }
+    }
+}
+
 struct PriorizedPath(PartialPathData);
 //
 /// Priorize cache cost, then given equal cache cost priorize simplest path

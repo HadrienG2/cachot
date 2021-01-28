@@ -37,7 +37,7 @@ pub(super) struct PathLink {
 
     /// In debug mode, we make sure that PathElems are correctly disposed of
     #[cfg(debug_assertions)]
-    disposed: bool,
+    disposed: DisposedStatus,
 }
 //
 impl PathLink {
@@ -57,7 +57,7 @@ impl PathLink {
         Self {
             key,
             #[cfg(debug_assertions)]
-            disposed: false,
+            disposed: DisposedStatus::Live,
         }
     }
 
@@ -108,8 +108,11 @@ impl PathLink {
     pub fn clone(&self, storage: &mut PathElemStorage) -> Self {
         self.debug_assert_valid();
         self.get_mut(storage).reference_count += 1;
-        // This is safe as the refcount has been incremented above
-        unsafe { self.weak_clone() }
+        Self {
+            key: self.key,
+            #[cfg(debug_assertions)]
+            disposed: DisposedStatus::Live,
+        }
     }
 
     /// Make a new PathLink pointing to the same PathElem without incrementing
@@ -119,19 +122,21 @@ impl PathLink {
     /// destroyed will trigger undefined behavior, so creating it obviously is
     /// an unsafe operation.
     ///
+    /// The output PathLink must not be disposed of.
+    ///
     pub unsafe fn weak_clone(&self) -> Self {
         self.debug_assert_valid();
         Self {
             key: self.key,
             #[cfg(debug_assertions)]
-            disposed: false,
+            disposed: DisposedStatus::Weak,
         }
     }
 
     /// Invalidate a PathLink, possibly disposing of the underlying storage
     pub fn dispose(&mut self, storage: &mut PathElemStorage) {
         // Manual tail call optimization of recursive PathLink::dispose()
-        self.debug_assert_valid();
+        self.debug_assert_live();
         let mut disposed_key = Some(self.key);
         self.debug_invalidate();
         while let Some(key) = disposed_key.take() {
@@ -143,7 +148,7 @@ impl PathLink {
             if path_elem.reference_count == 0 {
                 // ...prepare to recursively dispose of any previous elements...
                 if let Some(prev_link) = path_elem.prev_steps.as_mut() {
-                    prev_link.debug_assert_valid();
+                    prev_link.debug_assert_live();
                     disposed_key = Some(prev_link.key);
                     prev_link.debug_invalidate();
                 }
@@ -154,12 +159,21 @@ impl PathLink {
         }
     }
 
-    /// In debug mode, make sure that this path link is still valid
+    /// In debug mode, make sure that this path link can be dereferenced
     #[inline(always)]
     fn debug_assert_valid(&self) {
         #[cfg(debug_assertions)]
         {
-            debug_assert!(!self.disposed);
+            debug_assert_ne!(self.disposed, DisposedStatus::Dead);
+        }
+    }
+
+    /// In debug mode, make sure that this path link should be disposed of
+    #[inline(always)]
+    fn debug_assert_live(&self) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(self.disposed, DisposedStatus::Live);
         }
     }
 
@@ -168,7 +182,7 @@ impl PathLink {
     fn debug_invalidate(&mut self) {
         #[cfg(debug_assertions)]
         {
-            self.disposed = true;
+            self.disposed = DisposedStatus::Dead;
         }
     }
 }
@@ -176,11 +190,27 @@ impl PathLink {
 #[cfg(debug_assertions)]
 impl Drop for PathLink {
     fn drop(&mut self) {
-        assert!(
+        assert_ne!(
             self.disposed,
+            DisposedStatus::Live,
             "PathLink dropped without having been properly disposed of"
         );
     }
+}
+
+#[cfg(debug_assertions)]
+/// Value of PathLink::disposed
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DisposedStatus {
+    /// PathLink points to live data and that data must be disposed of.
+    Live,
+
+    /// PathLink was created using weak_clone(), we can assert that it points
+    /// to valid data but we should not liberate said data.
+    Weak,
+
+    /// PathLink has been disposed of and should not be used anymore.
+    Dead,
 }
 
 /// Reference-counted PartialPath path element
