@@ -130,6 +130,20 @@ pub fn search_best_path(
             tolerance = (2.0 * tolerance).min(max_tolerance);
         }
     }
+
+    // Announce results
+    if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
+        if let Some(ref path) = best_path {
+            println!("- Overall, the best path was: {:?}", path,);
+            println!(
+                "  * Cache cost w/o first accesses: {}",
+                best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
+            );
+            println!("  * Deviation from unit steps: {:.2}", best_extra_distance);
+        } else {
+            println!("- Did not find any better path than the original seed");
+        }
+    }
     best_path
 }
 
