@@ -61,6 +61,11 @@ impl<'storage> PartialPath<'storage> {
         }
     }
 
+    /// Get the last path entry
+    pub fn last_step(&self) -> FeedPair {
+        *self.data.last_step(&*self.path_elem_storage.borrow())
+    }
+
     /// Iterate over the path steps and cumulative costs in reverse step order
     pub fn iter_rev(&'storage self) -> impl Iterator<Item = (FeedPair, cache::Cost)> + 'storage {
         self.data.iter_rev(self.path_elem_storage.borrow())
@@ -192,9 +197,6 @@ pub struct PartialPathData {
     /// Length of the path in steps
     path_len: usize,
 
-    /// Last path step
-    curr_step: FeedPair,
-
     /// Total cache cost, accumulated over previous path steps
     curr_cost: cache::Cost,
 
@@ -265,7 +267,6 @@ impl PartialPathData {
         Self {
             path,
             path_len: 1,
-            curr_step: start_step,
             curr_cost,
             visited_pairs,
             cache_sim,
@@ -293,8 +294,11 @@ impl PartialPathData {
     //
     // NOTE: This operation is hot and must be fast
     //
-    pub fn last_step(&self) -> &FeedPair {
-        &self.curr_step
+    fn last_step<'storage>(
+        &self,
+        path_elem_storage: &'storage PathElemStorage,
+    ) -> &'storage FeedPair {
+        &self.path.get(path_elem_storage).curr_step
     }
 
     /// Iterate over the path steps and cumulative costs in reverse step order
@@ -391,7 +395,7 @@ impl PartialPathData {
         next_visited_pairs[word] |= 1 << bit;
 
         let step_length = self
-            .last_step()
+            .last_step(path_elem_storage)
             .iter()
             .zip(next_step.iter())
             .map(|(&curr_coord, &next_coord)| {
@@ -403,7 +407,6 @@ impl PartialPathData {
         Self {
             path: next_path,
             path_len: self.path_len + 1,
-            curr_step: next_step,
             curr_cost: next_cost,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
