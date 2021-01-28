@@ -8,9 +8,10 @@ use self::history::PathLink;
 use super::FeedPair;
 use crate::{
     cache::{self, CacheModel, CacheSimulation},
-    FeedIdx, MAX_FEEDS, MAX_PAIRS,
+    FeedIdx, MAX_FEEDS, MAX_PAIRS, _MAX_UNORDERED_PAIRS,
 };
 use num_traits::identities::Zero;
+use static_assertions::const_assert;
 use std::{
     cell::{Ref, RefCell},
     ops::Deref,
@@ -191,7 +192,7 @@ pub struct PartialPathData {
     path: PathLink,
 
     /// Length of the path in steps
-    path_len: usize,
+    path_len: PathLen,
 
     /// Last path step
     curr_step: FeedPair,
@@ -208,6 +209,10 @@ pub struct PartialPathData {
     /// Current state of the cache simulation
     cache_sim: CacheSimulation,
 }
+//
+/// Type appropriate for representing path lengths
+pub type PathLen = u8;
+const_assert!(PathLen::MAX as usize >= _MAX_UNORDERED_PAIRS);
 //
 /// Total distance that was "walked" across a path step
 pub type StepDistance = f32;
@@ -279,7 +284,7 @@ impl PartialPathData {
     // NOTE: This operation is hot and must be fast
     //
     pub fn len(&self) -> usize {
-        self.path_len
+        self.path_len as usize
     }
 
     /// Tell how much excess distance was covered through path stepping
