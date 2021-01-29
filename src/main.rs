@@ -1,4 +1,4 @@
-mod brute_force;
+// mod brute_force;
 pub(crate) mod cache;
 mod pair_locality;
 
@@ -25,7 +25,7 @@ type FeedIdx = space_filler::Coordinate;
 /// As a compromise until we get there, we will use an upper bound on the number
 /// of feeds that will be used in tests.
 ///
-pub(crate) const MAX_FEEDS: FeedIdx = 8 /* 16 */;
+pub(crate) const MAX_FEEDS: FeedIdx = 16 /* 16 */;
 
 /// Maximum number of feed pairs
 const MAX_PAIRS: usize = MAX_FEEDS as usize * MAX_FEEDS as usize;
@@ -41,18 +41,14 @@ fn main() {
         4,
         // Actual PAON-4 configuration
         8,
-        /* // TODO: What would happen with more feeds?
-        16 */
+        // TODO: What would happen with more feeds?
+        16
     ];
     assert!(*TESTED_NUM_FEEDS.iter().max().unwrap() <= MAX_FEEDS);
 
-    let mut debug_level = 2;
+    let mut debug_level = 0 /* 2 */;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
         println!("=== Testing with {} feeds ===\n", num_feeds);
-        assert!(
-            num_feeds <= MAX_FEEDS,
-            "Please update MAX_FEEDS for this configuration"
-        );
 
         // The L1 cache must be able to hold data for at least 3 feeds,
         // otherwise every access to a new pair will be a cache miss.
@@ -125,18 +121,18 @@ fn main() {
             // Tell which iterator got the best results
             let mut best_cumulative_cost = locality_tester.announce_best_iterator().to_owned();
 
-            // Now, let's try to brute-force a better iterator
+            /* // Now, let's try to brute-force a better iterator
             println!("\nPerforming brute force search for a better path...");
             brute_force::search_best_path(
                 num_feeds,
                 entry_size,
                 &mut best_cumulative_cost[..],
                 Duration::from_secs(60),
-            );
+            ); */
 
             debug_level = debug_level.saturating_sub(1);
             println!();
         }
-        debug_level = (num_feeds < 8).into();
+        /* debug_level = (num_feeds < 8).into(); */
     }
 }

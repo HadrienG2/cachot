@@ -121,7 +121,7 @@ pub struct CacheSimulation {
 /// the number of pairs, which itself is MAX_FEEDS * (MAX_FEEDS + 1) / 2, and
 /// should otherwise be as small as possible since it's part of the
 /// PartialPathData struct that dominates our memory bandwidth usage.
-type CacheClock = u8; /* u16 for 16 feeds */
+type CacheClock = u16; /* u16 for 16 feeds */
 const_assert!(CacheClock::MAX as usize >= 2 * _MAX_UNORDERED_PAIRS + 1);
 //
 impl CacheSimulation {
