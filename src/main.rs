@@ -69,7 +69,7 @@ fn main() {
         // but also with larger chunks of feed data, which are potentially more
         // efficient to process.
         //
-        for num_l1_entries in 3..num_feeds {
+        for num_l1_entries in 2..num_feeds {
             let entry_size = cache::L1_CAPACITY / num_l1_entries as usize;
             let mut locality_tester = PairLocalityTester::new(debug_level, entry_size);
             println!("--- Testing L1 capacity of {} feeds ---", num_l1_entries);
@@ -88,8 +88,7 @@ fn main() {
             locality_tester.test_feed_pair_locality("Naive", naive.into_iter());
 
             // Block-wise iteration scheme
-            let mut block_size = 2;
-            while block_size < num_feeds {
+            for block_size in 2..num_feeds {
                 let_gen!(blocked_basic, {
                     for feed1_block in (0..num_feeds).step_by(block_size.into()) {
                         for feed2_block in (feed1_block..num_feeds).step_by(block_size.into()) {
@@ -107,7 +106,6 @@ fn main() {
                     &format!("{0}x{0} blocks", block_size),
                     blocked_basic.into_iter(),
                 );
-                block_size += 1;
             }
 
             // Morton curve ("Z order") iteration
