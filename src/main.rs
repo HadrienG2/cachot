@@ -87,6 +87,160 @@ fn main() {
             });
             locality_tester.test_feed_pair_locality("Naive", naive.into_iter());
 
+            // Iteration scheme that goes from top to bottom, and for each row
+            // alternatively goes from right to left and from left to right
+            let_gen!(zigzag, {
+                let mut reverse = true;
+                for feed2 in 0..num_feeds {
+                    if reverse {
+                        for feed1 in (0..=feed2).rev() {
+                            yield_!([feed1, feed2]);
+                        }
+                    } else {
+                        for feed1 in 0..=feed2 {
+                            yield_!([feed1, feed2]);
+                        }
+                    }
+                    reverse = !reverse;
+                }
+            });
+            locality_tester.test_feed_pair_locality("Zig-zag", zigzag.into_iter());
+
+            // Variation of the "zig-zag" scheme that also switches the
+            // iteration direction from vertical to horizontal and back whenever
+            // the end of a line is reached
+            let_gen!(zigzag_corner, {
+                let mut reverse = false;
+                let mut offset = 0;
+                while offset < num_feeds - offset {
+                    if reverse {
+                        for feed1 in ((offset + 1)..(num_feeds - offset)).rev() {
+                            yield_!([feed1, num_feeds - offset - 1]);
+                        }
+                        for feed2 in (offset..(num_feeds - offset)).rev() {
+                            yield_!([offset, feed2]);
+                        }
+                    } else {
+                        for feed2 in offset..(num_feeds - offset) {
+                            yield_!([offset, feed2]);
+                        }
+                        for feed1 in (offset + 1)..(num_feeds - offset) {
+                            yield_!([feed1, num_feeds - offset - 1]);
+                        }
+                    }
+                    reverse = !reverse;
+                    offset += 1;
+                }
+            });
+            locality_tester.test_feed_pair_locality("Zig-zag corner", zigzag_corner.into_iter());
+
+            // Iteration schemes that gradually shrinks the triangular domain of
+            // radio feed pairs into smaller triangular domains by progressing
+            // in diagonal stripes
+            for stripe_width in 1..num_feeds {
+                // Minimal version, all stripes taken from top-left to bottom-right
+                let_gen!(striped_minimal, {
+                    let mut stripe_offset = 0;
+                    while stripe_offset < num_feeds {
+                        for feed2 in stripe_offset..num_feeds {
+                            let stripe_end = feed2.saturating_sub(stripe_offset);
+                            let stripe_start = stripe_end.saturating_sub(stripe_width - 1);
+                            for feed1 in stripe_start..=stripe_end {
+                                yield_!([feed1, feed2]);
+                            }
+                        }
+                        stripe_offset += stripe_width;
+                    }
+                });
+                locality_tester.test_feed_pair_locality(
+                    &format!("{0}-wide stripes (minimal)", stripe_width),
+                    striped_minimal.into_iter(),
+                );
+
+                // Slightly more elaborate iteration order that goes from top
+                // to bottom on the first iteration, from bottom to top on the
+                // second iteration, then back from top to bottom...
+                let_gen!(striped_vertical_zigzag, {
+                    let mut stripe_offset = 0;
+                    let mut reverse = false;
+                    while stripe_offset < num_feeds {
+                        if reverse {
+                            for feed2 in (stripe_offset..num_feeds).rev() {
+                                let stripe_end = feed2.saturating_sub(stripe_offset);
+                                let stripe_start = stripe_end.saturating_sub(stripe_width - 1);
+                                for feed1 in (stripe_start..=stripe_end).rev() {
+                                    yield_!([feed1, feed2]);
+                                }
+                            }
+                        } else {
+                            for feed2 in stripe_offset..num_feeds {
+                                let stripe_end = feed2.saturating_sub(stripe_offset);
+                                let stripe_start = stripe_end.saturating_sub(stripe_width - 1);
+                                for feed1 in stripe_start..=stripe_end {
+                                    yield_!([feed1, feed2]);
+                                }
+                            }
+                        }
+                        stripe_offset += stripe_width;
+                        reverse = !reverse;
+                    }
+                });
+                locality_tester.test_feed_pair_locality(
+                    &format!("{0}-wide stripes (vertical zig-zag)", stripe_width),
+                    striped_vertical_zigzag.into_iter(),
+                );
+
+                // Further elaboration on top of the "vertical zig-zag" version,
+                // which also goes back and forth in the horizontal direction
+                let_gen!(striped_double_zigzag, {
+                    let mut stripe_offset = 0;
+                    let mut vertical_reverse = false;
+                    while stripe_offset < num_feeds {
+                        let mut horizontal_reverse = !vertical_reverse;
+                        if vertical_reverse {
+                            for feed2 in (stripe_offset..num_feeds).rev() {
+                                let stripe_end = feed2.saturating_sub(stripe_offset);
+                                let stripe_start = stripe_end.saturating_sub(stripe_width - 1);
+                                if horizontal_reverse {
+                                    for feed1 in stripe_start..=stripe_end {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                } else {
+                                    for feed1 in (stripe_start..=stripe_end).rev() {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                }
+                                horizontal_reverse = !horizontal_reverse;
+                            }
+                        } else {
+                            for feed2 in stripe_offset..num_feeds {
+                                let stripe_end = feed2.saturating_sub(stripe_offset);
+                                let stripe_start = stripe_end.saturating_sub(stripe_width - 1);
+                                if horizontal_reverse {
+                                    for feed1 in (stripe_start..=stripe_end).rev() {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                } else {
+                                    for feed1 in stripe_start..=stripe_end {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                }
+                                horizontal_reverse = !horizontal_reverse;
+                            }
+                        }
+                        stripe_offset += stripe_width;
+                        vertical_reverse = !vertical_reverse;
+                    }
+                });
+                locality_tester.test_feed_pair_locality(
+                    &format!("{0}-wide stripes (double zig-zag)", stripe_width),
+                    striped_double_zigzag.into_iter(),
+                );
+
+                // TODO: Add "mirrorred" strategy that flips the coordinate
+                //       iteration order
+            }
+
             // Block-wise iteration scheme
             for block_size in 2..num_feeds {
                 let_gen!(blocked_basic, {
