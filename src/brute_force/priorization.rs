@@ -250,7 +250,7 @@ impl PriorizedPath {
     fn priority(&self) -> Priority {
         (
             -(self.0.cost_so_far().to_bits() as isize),
-            -(self.0.extra_distance().to_bits() as isize),
+            -(self.0.extra_distance() as isize),
         )
     }
 }

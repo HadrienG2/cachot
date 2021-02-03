@@ -10,8 +10,7 @@ use crate::{
     cache::{self, CacheModel, CacheSimulation},
     FeedIdx, MAX_FEEDS, MAX_PAIRS, _MAX_UNORDERED_PAIRS,
 };
-use fixed::{types::extra::U7, FixedU16};
-use num_traits::identities::{One, Zero};
+use num_traits::identities::Zero;
 use static_assertions::const_assert;
 use std::{
     cell::{Ref, RefCell},
@@ -217,9 +216,8 @@ pub type PackedFeedPair = u8;
 const PACKED_FEED_BITS: u32 = 8 * std::mem::size_of::<PackedFeedPair>() as u32 / 2;
 const_assert!(1 << PACKED_FEED_BITS >= MAX_FEEDS);
 //
-/// Total distance that was "walked" across a path step
-pub type StepDistance = FixedU16<U7>;
-const _STEP_DISTANCE_GRANULARITY: u16 = 1 << 7;
+/// Total distance that was "walked" across a set of path steps
+pub type StepDistance = u16;
 //
 impl PartialPathData {
     /// Pack a FeedPair into a PackedFeedPair
@@ -299,7 +297,7 @@ impl PartialPathData {
             curr_cost,
             visited_pairs,
             cache_sim,
-            extra_distance: StepDistance::zero(),
+            extra_distance: 0,
         }
     }
 
@@ -420,16 +418,14 @@ impl PartialPathData {
         //       it is too expensive use get_unchecked.
         next_visited_pairs[word] |= 1 << bit;
 
-        let step_length = StepDistance::from_num(
-            self.last_step()
-                .iter()
-                .zip(next_step.iter())
-                .map(|(&curr_coord, &next_coord)| {
-                    ((next_coord as f32) - (curr_coord as f32)).powi(2)
-                })
-                .sum::<f32>()
-                .sqrt(),
-        );
+        let step_length: StepDistance = self
+            .last_step()
+            .iter()
+            .zip(next_step.iter())
+            .map(|(&curr_coord, &next_coord)| {
+                ((next_coord as isize) - (curr_coord as isize)).abs() as u16
+            })
+            .sum();
 
         Self {
             path: next_path,
@@ -438,7 +434,7 @@ impl PartialPathData {
             curr_cost: next_cost,
             visited_pairs: next_visited_pairs,
             cache_sim: next_cache,
-            extra_distance: self.extra_distance + (step_length - StepDistance::one()),
+            extra_distance: self.extra_distance + (step_length - 1),
         }
     }
 
