@@ -17,6 +17,11 @@ pub struct PairLocalityTester {
 impl PairLocalityTester {
     /// Build the test harness
     pub fn new(debug_level: usize, entry_size: usize) -> Self {
+        if debug_level == 0 {
+            println!("┌──────────────────────────────────────────┬──────────────────┬────────────────────┬───────────────┐");
+            println!("│ Iterator name                            │ Total cache cost │ w/o first accesses │ Per feed load │");
+            println!("├──────────────────────────────────────────┼──────────────────┼────────────────────┼───────────────┤");
+        }
         Self {
             debug_level,
             cache_model: CacheModel::new(entry_size),
@@ -81,13 +86,15 @@ impl PairLocalityTester {
             feed_load_count += 2;
         }
         match self.debug_level {
-            0 => println!(
-                "Total cache cost of iterator \"{}\" is {}, {} w/o first accesses, {:.2} per feed load",
-                name,
-                total_cost,
-                total_cost - new_entries_cost,
-                (total_cost - new_entries_cost).to_num::<f32>() / (feed_load_count as f32)
-            ),
+            0 => {
+                println!(
+                    "│ {:<40} │ {:<16} │ {:<18} │ {:<13.2} │",
+                    name,
+                    total_cost,
+                    total_cost - new_entries_cost,
+                    (total_cost - new_entries_cost).to_num::<f32>() / (feed_load_count as f32)
+                )
+            }
             _ => println!(
                 "- Total cache cost of this iterator is {}, {} w/o first accesses, {:.2} per feed load",
                 total_cost,
@@ -113,6 +120,8 @@ impl PairLocalityTester {
     pub fn announce_best_iterator(&self) -> &[cache::Cost] {
         if self.debug_level > 0 {
             println!();
+        } else {
+            println!("└──────────────────────────────────────────┴──────────────────┴────────────────────┴───────────────┘");
         }
         let (best_name, cumulative_cost) = self
             .best_iterator

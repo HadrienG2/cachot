@@ -70,12 +70,15 @@ fn main() {
         // efficient to process.
         //
         for num_l1_entries in 2..num_feeds {
-            let entry_size = cache::L1_CAPACITY / num_l1_entries as usize;
-            let mut locality_tester = PairLocalityTester::new(debug_level, entry_size);
+            // Announce test
             println!("--- Testing L1 capacity of {} feeds ---", num_l1_entries);
             if debug_level == 0 {
                 println!();
             }
+
+            // Set up test
+            let entry_size = cache::L1_CAPACITY / num_l1_entries as usize;
+            let mut locality_tester = PairLocalityTester::new(debug_level, entry_size);
 
             // Naive iteration scheme
             let_gen!(naive, {
