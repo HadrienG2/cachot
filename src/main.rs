@@ -332,6 +332,7 @@ fn main() {
             debug_level = debug_level.saturating_sub(1);
             println!();
         }
+        println!();
         debug_level = (num_feeds < 8).into();
     }
 }
