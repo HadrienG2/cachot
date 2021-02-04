@@ -235,8 +235,53 @@ fn main() {
                     striped_double_zigzag.into_iter(),
                 );
 
-                // TODO: Add "mirrorred" strategy that flips the coordinate
-                //       iteration order
+                // Final elaboration of the "double zig-zag" version, which
+                // flips the two iteration directions on every stripe
+                let_gen!(striped_mirrored_zigzag, {
+                    let mut stripe_offset = 0;
+                    let mut primary_reverse = false;
+                    while stripe_offset < num_feeds {
+                        let mut secondary_reverse = primary_reverse;
+                        if primary_reverse {
+                            let feed1_end = num_feeds.saturating_sub(stripe_offset);
+                            for feed1 in (0..feed1_end).rev() {
+                                let stripe_start = (feed1 + stripe_offset).min(num_feeds - 1);
+                                let stripe_end = (stripe_start + stripe_width).min(num_feeds);
+                                if secondary_reverse {
+                                    for feed2 in stripe_start..stripe_end {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                } else {
+                                    for feed2 in (stripe_start..stripe_end).rev() {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                }
+                                secondary_reverse = !secondary_reverse;
+                            }
+                        } else {
+                            for feed2 in stripe_offset..num_feeds {
+                                let stripe_end = feed2.saturating_sub(stripe_offset);
+                                let stripe_start = stripe_end.saturating_sub(stripe_width - 1);
+                                if secondary_reverse {
+                                    for feed1 in (stripe_start..=stripe_end).rev() {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                } else {
+                                    for feed1 in stripe_start..=stripe_end {
+                                        yield_!([feed1, feed2]);
+                                    }
+                                }
+                                secondary_reverse = !secondary_reverse;
+                            }
+                        }
+                        stripe_offset += stripe_width;
+                        primary_reverse = !primary_reverse;
+                    }
+                });
+                locality_tester.test_feed_pair_locality(
+                    &format!("{0}-wide stripes (mirrored zig-zag)", stripe_width),
+                    striped_mirrored_zigzag.into_iter(),
+                );
             }
 
             // Block-wise iteration scheme
