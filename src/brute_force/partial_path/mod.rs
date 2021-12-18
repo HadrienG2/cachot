@@ -225,8 +225,7 @@ impl PartialPathData {
     // NOTE: This operation is relatively hot and must be quite fast
     //
     const fn pack_feed_pair(&[x, y]: &FeedPair) -> PackedFeedPair {
-        // TODO: Enable once const fn can panic
-        // debug_assert!(x < MAX_FEEDS && y < MAX_FEEDS);
+        debug_assert!(x < MAX_FEEDS && y < MAX_FEEDS);
         (x << PACKED_FEED_BITS) + y
     }
 
