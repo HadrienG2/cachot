@@ -59,9 +59,6 @@ pub struct PriorizedPartialPaths<'storage> {
 
     /// Threshold of next slot occupancy above which we move to the next slot
     high_water_mark: usize,
-
-    /// Mechanism to periodically leave path selection to chance
-    iters_since_last_rng: usize,
 }
 //
 impl<'storage> PriorizedPartialPaths<'storage> {
@@ -83,7 +80,6 @@ impl<'storage> PriorizedPartialPaths<'storage> {
             min_path_len: 1,
             curr_path_len: 0,
             high_water_mark,
-            iters_since_last_rng: 0,
         }
     }
 
@@ -98,7 +94,7 @@ impl<'storage> PriorizedPartialPaths<'storage> {
 
     /// Record a pre-existing partial path
     #[inline(always)]
-    pub fn push(&mut self, path: PartialPath) {
+    pub fn push(&mut self, path: PartialPath<'_>) {
         debug_assert!(
             // Initial seeding
             (self.min_path_len == 1 && self.curr_path_len == 0 && path.len() == 1)
@@ -111,7 +107,7 @@ impl<'storage> PriorizedPartialPaths<'storage> {
 
     /// Extract one of the highest-priority paths
     #[inline(always)]
-    pub fn pop(&mut self, mut rng: impl Rng) -> Option<PartialPath<'storage>> {
+    pub fn pop(&mut self, _rng: impl Rng) -> Option<PartialPath<'storage>> {
         // Handle edge case where all paths have already been processed
         if self.paths_by_len.is_empty() {
             return None;
@@ -184,7 +180,7 @@ impl<'storage> PriorizedPartialPaths<'storage> {
     /// This is very expensive, but only meant to be done when a new cache cost
     /// record is achieved, which doesn't happen very often.
     ///
-    pub fn prune(&mut self, mut should_prune: impl FnMut(&PartialPath) -> bool) {
+    pub fn prune(&mut self, mut should_prune: impl FnMut(&PartialPath<'_>) -> bool) {
         let mut new_paths = BinaryHeap::with_capacity(self.high_water_mark);
         for old_paths in &mut self.paths_by_len {
             for priorized_path in old_paths.drain() {
@@ -232,7 +228,7 @@ type Priority = (isize, isize);
 //
 impl PriorizedPath {
     /// Build a PriorizedPath from a PartialPath
-    fn new(path: PartialPath) -> Self {
+    fn new(path: PartialPath<'_>) -> Self {
         Self(path.unwrap())
     }
 

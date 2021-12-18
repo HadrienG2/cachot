@@ -44,7 +44,7 @@ impl ProgressMonitor {
     }
 
     /// Record that a path step has been taken, print periodical reports
-    pub fn record_step(&mut self, paths: &PriorizedPartialPaths) {
+    pub fn record_step(&mut self, paths: &PriorizedPartialPaths<'_>) {
         // Only report on progress infrequently so that search isn't slowed down
         self.total_path_steps += 1;
         const CLOCK_CHECK_RATE: u64 = 1 << 17;
