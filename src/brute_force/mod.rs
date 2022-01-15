@@ -64,8 +64,8 @@ pub fn search_best_path(
             // Notify of loop progression
             if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                 println!(
-                    "- Using cumulative cost tolerance {} and neighbor search radius {}",
-                    tolerance, search_radius
+                    "- Using cumulative cost tolerance {tolerance} \
+                       and neighbor search radius {search_radius}"
                 );
             }
 
@@ -81,18 +81,16 @@ pub fn search_best_path(
             ) {
                 if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                     println!(
-                        "  * Found a better path at cumulative cost tolerance {} and search radius {}:",
-                        tolerance, search_radius
+                        "  * Found a better path \
+                             at cumulative cost tolerance {tolerance} \
+                             and search radius {search_radius}:"
                     );
-                    println!("    - Path: {:?}", path,);
+                    println!("    - Path: {path:?}");
                     println!(
                         "    - Cache cost w/o first accesses: {}",
                         best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
                     );
-                    println!(
-                        "    - Deviation from unit steps: {:.1}",
-                        best_extra_distance
-                    );
+                    println!("    - Deviation from unit steps: {best_extra_distance:.1}");
                 }
                 best_path = Some(path);
             } else {
@@ -136,12 +134,12 @@ pub fn search_best_path(
     // Announce results
     if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
         if let Some(ref path) = best_path {
-            println!("- Overall, the best path was: {:?}", path,);
+            println!("- Overall, the best path was: {path:?}");
             println!(
                 "  * Cache cost w/o first accesses: {}",
                 best_cumulative_cost.last().unwrap() - cache::min_cache_cost(num_feeds),
             );
-            println!("  * Deviation from unit steps: {:.1}", best_extra_distance);
+            println!("  * Deviation from unit steps: {best_extra_distance:.1}");
         } else {
             println!("- Did not find any better path than the original seed!");
         }
@@ -242,8 +240,8 @@ fn search_best_path_iteration(
         let should_prune = cost_so_far > (best_current_cost + tolerance).min(last_cost_record);
         if should_prune && BRUTE_FORCE_DEBUG_LEVEL >= 4 {
             println!(
-                "      * That exceeds cache cost tolerance with only {}/{} steps, ignore it.",
-                curr_path_len, path_length
+                "      * That exceeds cache cost tolerance with only \
+                         {curr_path_len}/{path_length} steps, ignore it."
             );
         }
         should_prune
@@ -272,10 +270,10 @@ fn search_best_path_iteration(
         if BRUTE_FORCE_DEBUG_LEVEL >= 3 {
             let mut path_display = String::new();
             for step_and_cost in partial_path.iter_rev() {
-                write!(path_display, "{:?} <- ", step_and_cost).unwrap();
+                write!(path_display, "{step_and_cost:?} <- ").unwrap();
             }
             path_display.push_str("START");
-            println!("    - Currently on partial path {}", path_display);
+            println!("    - Currently on partial path {path_display}");
         }
 
         // Enumerate all possible next points, the constraints on them being...
@@ -295,7 +293,7 @@ fn search_best_path_iteration(
 
                 // Log which neighbor we're looking at in verbose mode
                 if BRUTE_FORCE_DEBUG_LEVEL >= 4 {
-                    println!("      * Trying {:?}...", next_step);
+                    println!("      * Trying {next_step:?}...");
                 }
 
                 // Check if we've been on that neighbor before
@@ -347,20 +345,21 @@ fn search_best_path_iteration(
                         if BRUTE_FORCE_DEBUG_LEVEL >= 1 {
                             println!("  * Reached a new cache cost or extra distance record!");
                             println!(
-                                "    - Total cache cost was {} ({} w/o new entries), extra distance was {:.1}",
-                                next_cost,
-                                next_cost - new_entries_cost,
-                                partial_path.extra_distance()
+                                "    - Total cache cost was {next_cost} \
+                                       ({cost_wo_new_entries} w/o new entries), \
+                                       extra distance was {extra_distance:.1}",
+                                cost_wo_new_entries = next_cost - new_entries_cost,
+                                extra_distance = partial_path.extra_distance()
                             );
                         }
                         if BRUTE_FORCE_DEBUG_LEVEL == 1 {
-                            println!("    - Path was {:?}", final_path);
+                            println!("    - Path was {final_path:?}");
                         } else if BRUTE_FORCE_DEBUG_LEVEL >= 2 {
                             let path_cost = final_path
                                 .iter()
                                 .zip(best_cumulative_cost.iter())
                                 .collect::<Box<[_]>>();
-                            println!("    - Path and cumulative cost was {:?}", path_cost);
+                            println!("    - Path and cumulative cost was {path_cost:?}");
                         }
 
                         // If a cache cost record has been achieved, prune stored

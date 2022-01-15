@@ -48,7 +48,7 @@ fn main() {
 
     let mut debug_level = 2;
     for num_feeds in TESTED_NUM_FEEDS.iter().copied() {
-        println!("=== Testing with {} feeds ===\n", num_feeds);
+        println!("=== Testing with {num_feeds} feeds ===\n");
         assert!(
             num_feeds <= MAX_FEEDS,
             "Please update MAX_FEEDS for this configuration"
@@ -71,7 +71,7 @@ fn main() {
         //
         for num_l1_entries in 2..num_feeds {
             // Announce and set up the test
-            println!("--- Testing L1 capacity of {} feeds ---", num_l1_entries);
+            println!("--- Testing L1 capacity of {num_l1_entries} feeds ---");
             let entry_size = cache::L1_CAPACITY / num_l1_entries as usize;
             let mut locality_tester = PairLocalityTester::new(debug_level, entry_size);
 
@@ -151,7 +151,7 @@ fn main() {
                     }
                 });
                 locality_tester.test_feed_pair_locality(
-                    &format!("{0}-wide stripes (minimal)", stripe_width),
+                    &format!("{stripe_width}-wide stripes (minimal)"),
                     striped_minimal.into_iter(),
                 );
 
@@ -184,7 +184,7 @@ fn main() {
                     }
                 });
                 locality_tester.test_feed_pair_locality(
-                    &format!("{0}-wide stripes (vertical zig-zag)", stripe_width),
+                    &format!("{stripe_width}-wide stripes (vertical zig-zag)"),
                     striped_vertical_zigzag.into_iter(),
                 );
 
@@ -231,7 +231,7 @@ fn main() {
                     }
                 });
                 locality_tester.test_feed_pair_locality(
-                    &format!("{0}-wide stripes (double zig-zag)", stripe_width),
+                    &format!("{stripe_width}-wide stripes (double zig-zag)"),
                     striped_double_zigzag.into_iter(),
                 );
 
@@ -279,7 +279,7 @@ fn main() {
                     }
                 });
                 locality_tester.test_feed_pair_locality(
-                    &format!("{0}-wide stripes (mirrored zig-zag)", stripe_width),
+                    &format!("{stripe_width}-wide stripes (mirrored zig-zag)"),
                     striped_mirrored_zigzag.into_iter(),
                 );
             }
@@ -300,7 +300,7 @@ fn main() {
                     }
                 });
                 locality_tester.test_feed_pair_locality(
-                    &format!("{0}x{0} blocks", block_size),
+                    &format!("{block_size}x{block_size} blocks"),
                     blocked_basic.into_iter(),
                 );
             }
